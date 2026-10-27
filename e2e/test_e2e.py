@@ -103,6 +103,30 @@ def test_read_edit_submit_resume(browser, study):
         assert not errors, errors
 
 
+def test_drag_accuracy_and_grab_offset(browser, study):
+    with server(study) as url:
+        page, errors = open_reader(browser, url)
+        i = page.evaluate("S.pts.findIndex(p => p.xy)")
+        before = page.evaluate(f"S.pts[{i}].xy.slice()")
+        x, y = canvas_point(page, i)
+        # off-centre grab, then a sub-threshold wiggle: no change, still ok
+        page.mouse.move(x + 6, y + 5)
+        page.mouse.down()
+        page.mouse.move(x + 7, y + 5)
+        page.mouse.up()
+        assert page.evaluate(f"S.pts[{i}].xy") == before and statuses(page)[i] == "ok"
+        # real drag from an off-centre grab: the point moves by exactly the cursor delta
+        page.mouse.move(x + 6, y + 5)
+        page.mouse.down()
+        page.mouse.move(x + 36, y - 15, steps=8)
+        page.mouse.up()
+        sx, sy = page.evaluate("[S.view.sx, S.view.sy]")
+        after = page.evaluate(f"S.pts[{i}].xy")
+        assert abs(after[0] - (before[0] + 30 / sx)) < 0.05 and abs(after[1] - (before[1] - 20 / sy)) < 0.05
+        assert statuses(page)[i] == "moved"
+        assert not errors, errors
+
+
 def test_missing_point_and_scratch_placement(browser, study):
     with server(study) as url:
         total = get(f"{url}/api/r/r1/session")["total"]

@@ -13,7 +13,7 @@ const S = {
   drag: null, activeMs: 0, lastInput: Date.now(), nEvents: 0, refKind: "main",
   view: { x0: 0, y0: 0, x1: 512, y1: 512, sx: 1, sy: 1 },
 };
-const VIEW_W = 720, VIEW_H_MAX = 760, HIT = 10;
+const VIEW_W = 720, VIEW_H_MAX = 760, HIT = 10, DRAG_MIN = 2;
 
 // ---------------- start ----------------
 async function start() {
@@ -241,7 +241,9 @@ function onDown(e) {
   if (hit >= 0) {
     S.sel = hit;
     const p = S.pts[hit];
-    S.drag = { i: hit, from: p.xy.slice(), status: p.status, moved: false };
+    // keep the grab offset so an off-centre grab does not make the point jump to the cursor
+    const [qx, qy] = toCanvas(...p.xy);
+    S.drag = { i: hit, from: p.xy.slice(), status: p.status, moved: false, dx: px - qx, dy: py - qy, sx: px, sy: py };
     $("#view").setPointerCapture(e.pointerId);
   } else {
     const p = S.pts[S.sel];
@@ -261,8 +263,12 @@ function onDown(e) {
 function onMove(e) {
   if (!S.drag) return;
   const p = S.pts[S.drag.i];
-  p.xy = toImage(...canvasPos(e)).map(clamp512);
+  const [px, py] = canvasPos(e);
+  // a click to select a point is not a move
+  if (!S.drag.moved && Math.hypot(px - S.drag.sx, py - S.drag.sy) < DRAG_MIN) return;
+  p.xy = toImage(px - S.drag.dx, py - S.drag.dy).map(clamp512);
   if (!S.drag.moved && S.mode !== "adjudicate") { S.drag.moved = true; p.status = p.prefill ? "moved" : "added"; p.n_edits++; S.nEvents++; }
+  S.drag.moved = true;
   draw();
 }
 
