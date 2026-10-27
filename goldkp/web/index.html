@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Landmark reader</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div id="pick" class="screen">
+  <h1>Landmark reader</h1>
+  <p id="pickHint">Choose your reader id. Your annotations are stored separately and never shown to the other reader.</p>
+  <div id="readerButtons"></div>
+</div>
+
+<div id="main" class="screen" hidden>
+  <header>
+    <span id="who"></span>
+    <span id="cardPos"></span>
+    <div id="progress"><div id="progressBar"></div></div>
+    <span id="groupProgress"></span>
+    <span id="timer">0:00</span>
+    <button id="helpBtn" title="Keyboard shortcuts (?)">?</button>
+  </header>
+  <div id="work">
+    <section id="left">
+      <div id="banner"></div>
+      <canvas id="view" width="720" height="720"></canvas>
+      <div id="toolbar">
+        <button id="btnCrop" title="Crop / full image (c)">Full image</button>
+        <button id="btnMasks" title="Segmentation masks (m)">Masks: off</button>
+        <button id="btnHide" title="Hold h to hide the points">Hide points</button>
+        <label>Brightness <input id="bright" type="range" min="50" max="200" value="100"></label>
+        <label>Contrast <input id="contrast" type="range" min="50" max="250" value="100"></label>
+        <button id="btnResetView">Reset view</button>
+      </div>
+    </section>
+    <section id="right">
+      <div id="groupInfo">
+        <div id="groupTitle"></div>
+        <div id="groupRegion"></div>
+        <div id="groupDesc"></div>
+      </div>
+      <ol id="points"></ol>
+      <div id="adjLegend" hidden>
+        <span class="mk a"></span> reader A <span class="mk b"></span> reader B <span class="mk m"></span> mean
+      </div>
+      <label id="flagRow"><input type="checkbox" id="flag"> structure not assessable on this image</label>
+      <textarea id="comment" rows="2" placeholder="comment (optional)"></textarea>
+      <div id="nav">
+        <button id="btnPrev" title="Previous card (Backspace)">◀ Back</button>
+        <button id="btnSubmit" class="primary" title="Submit and next (Enter)">Submit ▶</button>
+      </div>
+      <div id="msg"></div>
+      <div id="refRow">
+        <div id="refBox">
+          <div id="refTabs">
+            <button id="refMain" class="on">Reference</button>
+            <button id="refSeries" hidden>All levels</button>
+            <span class="muted">ground truth example</span>
+          </div>
+          <img id="ref" alt="ground-truth reference for this group">
+        </div>
+        <canvas id="thumb" width="130" height="130" title="whole image; box = current view"></canvas>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div id="help" hidden>
+  <div class="panel">
+    <h2>Shortcuts</h2>
+    <table>
+      <tr><td>drag</td><td>move a point (status: moved)</td></tr>
+      <tr><td>click</td><td>place the selected point when it is missing</td></tr>
+      <tr><td>Tab / ↓ ↑</td><td>select next / previous point</td></tr>
+      <tr><td>n</td><td>selected point not visible</td></tr>
+      <tr><td>u</td><td>toggle unsure</td></tr>
+      <tr><td>r</td><td>reset selected point to the pre-fill</td></tr>
+      <tr><td>h (hold)</td><td>hide the points</td></tr>
+      <tr><td>m</td><td>toggle segmentation masks</td></tr>
+      <tr><td>c</td><td>crop / full image</td></tr>
+      <tr><td>1 / 2</td><td>reference: example / all levels</td></tr>
+      <tr><td>Enter</td><td>submit and next card</td></tr>
+      <tr><td>Backspace</td><td>previous card</td></tr>
+      <tr><td>Esc</td><td>cancel a drag / close this help</td></tr>
+    </table>
+    <button id="helpClose">Close</button>
+  </div>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>
