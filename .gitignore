@@ -1,5 +1,6 @@
 # study data and anything derived from credentialed images never goes into the repository
 data/
+study/
 demo_data/
 e2e/artifacts/
 readers/

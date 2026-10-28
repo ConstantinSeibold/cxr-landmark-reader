@@ -33,6 +33,12 @@ def test_full_view_groups_and_crop():
     assert not full and box[2] - box[0] >= 96 and box[0] <= 240 and box[2] >= 270
 
 
+def test_crop_at_the_image_border_stays_square():
+    masks = {"vertebrae L1": {"bbox": [235, 490, 275, 512]}}
+    (x0, y0, x1, y1), full = crop_box(masks, ["vertebrae L1"], "G19")
+    assert not full and x1 - x0 == y1 - y0 >= 96 and y1 == 512 and y0 <= 490
+
+
 def test_reader_order_is_a_permutation_and_differs():
     images = [{"dicom_id": f"d{i}", "view": "frontal", "no_prefill": False} for i in range(12)]
     cards = build_cards(images, VOCAB, {})

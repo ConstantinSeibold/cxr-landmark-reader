@@ -66,10 +66,11 @@ def crop_box(masks: dict, classes: list[str], gid: str) -> tuple[list[float], bo
     x1, y1 = max(b[2] for b in boxes), max(b[3] for b in boxes)
     pad = max(PAD_MIN, PAD_FRAC * max(x1 - x0, y1 - y0))
     x0, y0, x1, y1 = x0 - pad, y0 - pad, x1 + pad, y1 + pad
-    side = max(x1 - x0, y1 - y0, MIN_SIDE)
-    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-    x0, x1 = max(0, cx - side / 2), min(IMG, cx + side / 2)
-    y0, y1 = max(0, cy - side / 2), min(IMG, cy + side / 2)
+    side = min(max(x1 - x0, y1 - y0, MIN_SIDE), IMG)
+    # a structure at the image border shifts the square inward instead of cutting it into a strip
+    x0 = min(max(0, (x0 + x1) / 2 - side / 2), IMG - side)
+    y0 = min(max(0, (y0 + y1) / 2 - side / 2), IMG - side)
+    x1, y1 = x0 + side, y0 + side
     if (x1 - x0) * (y1 - y0) > MAX_BOX_FRAC * IMG * IMG:
         return [0, 0, IMG, IMG], True
     return [round(x0, 1), round(y0, 1), round(x1, 1), round(y1, 1)], False

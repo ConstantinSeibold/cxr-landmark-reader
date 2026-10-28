@@ -13,7 +13,7 @@ const S = {
   drag: null, activeMs: 0, lastInput: Date.now(), nEvents: 0, refKind: "main",
   view: { x0: 0, y0: 0, x1: 512, y1: 512, sx: 1, sy: 1 },
 };
-const VIEW_MIN = 320, THUMB_W = 96, HIT = 10, DRAG_MIN = 2;
+const VIEW_MIN = 320, THUMB_W = 96, HIT = 10, DRAG_MIN = 2, MAX_GAIN = 2.5;
 
 // ---------------- start ----------------
 async function start() {
@@ -104,7 +104,7 @@ async function updateProgress() {
 // ---------------- geometry ----------------
 function layout() {
   const c = S.card;
-  const [x0, y0, x1, y1] = S.full ? [0, 0, 512, 512] : c.box;
+  const [x0, y0, x1, y1] = S.full ? [0, 0, 512, 512] : squareBox(c.box);
   // the 512 px image is squashed from the original; stretch y back to the original aspect
   const ar = c.orig_wh ? c.orig_wh[1] / c.orig_wh[0] : 1;
   // fit the view into the free stage, keeping the aspect
@@ -115,6 +115,7 @@ function layout() {
   const cv = $("#view");
   cv.width = Math.round(w); cv.height = Math.round(h);
   S.view = { x0, y0, x1, y1, sx: cv.width / (x1 - x0), sy: cv.height / (y1 - y0) };
+  S.window = S.full ? "" : autoWindow();
   // the button shows the current view; cards without a zoomed view (the whole image is the crop) disable it
   const b = $("#btnCrop");
   b.disabled = c.full;
@@ -122,6 +123,32 @@ function layout() {
   b.title = c.full ? "This card is always shown as the whole image" : "Switch between the zoomed crop and the whole image (c)";
   const th = $("#thumb");
   th.width = THUMB_W; th.height = Math.round(THUMB_W * ar);
+}
+// studies built before cards.crop_box shifted its square inward cut it at the image border into
+// a thin strip; widen such a box back to a square inside the image
+function squareBox([x0, y0, x1, y1]) {
+  const side = Math.min(512, Math.max(x1 - x0, y1 - y0));
+  const fit = (a, b) => { const a0 = Math.min(Math.max(0, (a + b) / 2 - side / 2), 512 - side); return [a0, a0 + side]; };
+  const [nx0, nx1] = fit(x0, x1), [ny0, ny1] = fit(y0, y1);
+  return [nx0, ny0, nx1, ny1];
+}
+// zoomed crops are windowed to their own grey range (1st to 99th percentile), as radiology viewers
+// do on load: a crop of a bright region (upper abdomen under the diaphragm) otherwise shows as white.
+// brightness(b) then contrast(c) maps v to (v*b - .5)*c + .5; with b = 1/(2 mid) and c = 2 gain mid
+// that is gain * (v - mid) + .5, so the window centre lands on mid grey
+function autoWindow() {
+  const v = S.view, n = 64, cv = document.createElement("canvas");
+  cv.width = cv.height = n;
+  const ctx = cv.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(S.img, v.x0, v.y0, v.x1 - v.x0, v.y1 - v.y0, 0, 0, n, n);
+  const px = ctx.getImageData(0, 0, n, n).data, lum = [];
+  for (let i = 0; i < px.length; i += 4) lum.push((px[i] + px[i + 1] + px[i + 2]) / 765);
+  lum.sort((a, b) => a - b);
+  const lo = lum[Math.floor(lum.length * 0.01)], hi = lum[Math.floor(lum.length * 0.99)], mid = (lo + hi) / 2;
+  if (hi - lo > 0.8 || mid < 0.02) return "";             // already full range, or black
+  // at most MAX_GAIN: a near-saturated crop holds only a few grey levels and turns into JPEG blocks
+  const gain = Math.min(1 / Math.max(hi - lo, 1e-3), MAX_GAIN);
+  return `brightness(${1 / (2 * mid)}) contrast(${2 * gain * mid})`;
 }
 const toCanvas = (x, y) => [(x - S.view.x0) * S.view.sx, (y - S.view.y0) * S.view.sy];
 const toImage = (px, py) => [S.view.x0 + px / S.view.sx, S.view.y0 + py / S.view.sy];
@@ -131,7 +158,7 @@ function draw() {
   const cv = $("#view"), ctx = cv.getContext("2d");
   const v = S.view;
   ctx.clearRect(0, 0, cv.width, cv.height);
-  ctx.filter = `brightness(${$("#bright").value}%) contrast(${$("#contrast").value}%)`;
+  ctx.filter = `${S.window} brightness(${$("#bright").value}%) contrast(${$("#contrast").value}%)`;
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(S.img, v.x0, v.y0, v.x1 - v.x0, v.y1 - v.y0, 0, 0, cv.width, cv.height);
   ctx.filter = "none";
@@ -572,6 +599,7 @@ function wire() {
       return;
     }
     if (k === "?") { $("#help").hidden = !$("#help").hidden; return; }
+    if (!$("#help").hidden) return;                          // the help overlay takes no edits
     if ((e.ctrlKey || e.metaKey) && (k.toLowerCase() === "y" || (k.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); redo(); return; }
     if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "z") { e.preventDefault(); undo(); return; }
     if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "s") { e.preventDefault(); if (S.mode !== "adjudicate") exportNow(); return; }
