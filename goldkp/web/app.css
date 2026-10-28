@@ -58,3 +58,10 @@ header { display: flex; gap: 14px; align-items: center; padding-bottom: 8px; bor
 #maskLegend .chip.rule { border-style: dashed; }
 #nav { gap: 6px; }
 #help th { text-align: left; padding-top: 8px; color: var(--accent); }
+#jumpBox { display: flex; gap: 4px; }
+#jump { width: 80px; background: var(--panel); color: var(--fg); border: 1px solid #3a424b; border-radius: 4px; padding: 3px 6px; }
+#jumpGroup { max-width: 240px; background: var(--panel); color: var(--fg); border: 1px solid #3a424b; border-radius: 4px; }
+#defBox { background: var(--panel); border-radius: 4px; padding: 6px 10px; font-size: 13px; border-left: 3px solid var(--accent); }
+#defLabel { font-weight: 700; }
+#defBox .k { color: var(--muted); margin-right: 4px; }
+#defNote { color: #ffd166; }

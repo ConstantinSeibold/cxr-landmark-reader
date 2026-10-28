@@ -95,3 +95,13 @@ def test_main_refuses_public_host(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["x", "--data", ".", "--images", ".", "--host", "0.0.0.0"])
     with pytest.raises(SystemExit):
         server.main()
+
+
+def test_card_index_for_jumping(study, client_factory):
+    c = client_factory(*study)
+    d = c.get("/api/r/r1/cards").json()
+    assert [x["pos"] for x in d["cards"]] == list(range(7))
+    assert set(d["cards"][0]) == {"pos", "gid", "view", "batch", "mode", "done"}     # no image identifiers
+    assert d["group_names"]["frontal"]["G19"] == "Vertebrae"
+    card = c.get("/api/r/r1/card/0").json()
+    assert all("rule" in p and "method" in p and "note" in p for p in card["points"])

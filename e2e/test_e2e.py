@@ -188,6 +188,33 @@ def test_keyboard_nudge_redo_flag_space(browser, study):
         assert not errors, errors
 
 
+def test_jump_and_definitions(browser, study):
+    with server(study) as url:
+        page, errors = open_reader(browser, url)
+        page.fill("#jump", "7")
+        page.press("#jump", "Enter")
+        wait_card(page, 6)
+        assert page.locator("#cardPos").inner_text().startswith("card 7 /")
+        # group menu: jump to the first vertebra card
+        label = next(o for o in page.locator("#jumpGroup option").all_inner_texts() if o.startswith("G19"))
+        page.select_option("#jumpGroup", label=label)
+        page.wait_for_function("S.card && S.card.gid === 'G19'")
+        assert page.evaluate("S.card.batch") != ""
+        # definition panel follows the selection
+        first = page.locator("#defLabel").inner_text()
+        assert first == page.evaluate("S.pts[S.sel].label")
+        assert page.locator("#defMethod").inner_text().startswith("Definition:")
+        page.keyboard.press("Tab")
+        assert page.locator("#defLabel").inner_text() == page.evaluate("S.pts[S.sel].label") != first
+        # typing a card number must not trigger shortcuts
+        page.fill("#jump", "3")
+        assert page.evaluate("S.pts.every(p => p.status !== 'not_visible')")
+        page.select_option("#jumpGroup", label=next(o for o in page.locator("#jumpGroup option").all_inner_texts()
+                                                     if o.startswith("first card without")))
+        page.wait_for_function("S.card && S.card.mode === 'scratch'")
+        assert not errors, errors
+
+
 def test_missing_point_and_scratch_placement(browser, study):
     with server(study) as url:
         total = get(f"{url}/api/r/r1/session")["total"]

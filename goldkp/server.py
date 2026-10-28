@@ -139,6 +139,18 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
         return {"total": len(cards), "done": st.done, "cursor": first_open, "per_group": per_group,
                 "cards_sha": sha, "prefill_version": prefill_version}
 
+    @app.get("/api/r/{rid}/cards")
+    def card_index(rid: str):
+        """Compact list of this reader's cards for the jump menu (no image identifiers)."""
+        st = store_of(rid)
+        out = []
+        for pos, i in enumerate(orders[rid]):
+            c = cards[i]
+            out.append({"pos": pos, "gid": c["gid"], "view": c["view"], "batch": c["batch"], "mode": c["mode"],
+                        "done": st.latest(c["id"]) is not None})
+        names = {v: {g: meta["name"] for g, meta in vocab["groups"][v].items()} for v in vocab["groups"]}
+        return {"cards": out, "group_names": names}
+
     @app.get("/api/r/{rid}/card/{pos}")
     def card(rid: str, pos: int):
         st = store_of(rid)
@@ -153,7 +165,8 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
             pre = [p[0], p[1]] if p and p[2] > 0 else None
             d = defs.get(f"{view}|{key}", {})
             entry = {"key": key, "label": label, "colour": refs["colours"].get(f"{view}|{key}", "#ffffff"),
-                     "rule": d.get("rule", ""), "method": d.get("method", ""), "prefill": pre,
+                     "rule": d.get("rule", ""), "method": d.get("method", ""), "note": d.get("comment", ""),
+                     "prefill": pre,
                      "xy": pre, "status": "ok" if pre else "missing", "unsure": False}
             if mine:
                 rec = next((q for q in mine["points"] if q["key"] == key), None)

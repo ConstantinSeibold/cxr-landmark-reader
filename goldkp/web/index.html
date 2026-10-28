@@ -18,6 +18,10 @@
     <span id="cardPos"></span>
     <div id="progress"><div id="progressBar"></div></div>
     <span id="groupProgress"></span>
+    <span id="jumpBox">
+      <input id="jump" type="number" min="1" placeholder="card #" title="Go to card number (Enter)">
+      <select id="jumpGroup" title="Go to the first card of a group"><option value="">go to…</option></select>
+    </span>
     <span id="timer">0:00</span>
     <button id="helpBtn" title="Keyboard shortcuts (?)">?</button>
   </header>
@@ -42,6 +46,12 @@
         <div id="groupDesc"></div>
       </div>
       <ol id="points"></ol>
+      <div id="defBox">
+        <div id="defLabel"></div>
+        <div id="defMethod"></div>
+        <div id="defRule"></div>
+        <div id="defNote"></div>
+      </div>
       <div id="adjLegend" hidden>
         <span class="mk a"></span> reader A <span class="mk b"></span> reader B <span class="mk m"></span> mean
       </div>

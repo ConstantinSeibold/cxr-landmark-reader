@@ -41,6 +41,7 @@ async function enter(rid) {
   const s = await api(S.mode === "adjudicate" ? "/api/adj/session" : `/api/r/${rid}/session`);
   S.total = s.total;
   if (!s.total) { $("#banner").textContent = "Nothing to do."; return; }
+  if (S.mode !== "adjudicate") await buildJumpMenu(); else $("#jumpGroup").hidden = true;
   await load(Math.min(s.cursor, s.total - 1));
 }
 
@@ -209,6 +210,49 @@ function banner() {
 
 // ---------------- list ----------------
 const STATUS_TEXT = { ok: "ok", moved: "moved", added: "placed", not_visible: "not visible", missing: "missing" };
+// ---------------- jump ----------------
+async function buildJumpMenu() {
+  const d = await api(`/api/r/${S.rid}/cards`);
+  const sel = $("#jumpGroup");
+  sel.length = 1;
+  const seen = new Map();
+  for (const c of d.cards) {
+    const k = `${c.gid}|${c.view}`;
+    if (!seen.has(k)) seen.set(k, { first: c.pos, n: 0, done: 0, gid: c.gid, view: c.view });
+    const g = seen.get(k); g.n++; g.done += c.done;
+  }
+  for (const g of seen.values()) {
+    const o = document.createElement("option");
+    o.value = g.first;
+    o.textContent = `${g.gid} ${d.group_names[g.view][g.gid]} · ${g.view} (${g.done}/${g.n})`;
+    sel.appendChild(o);
+  }
+  const scratch = d.cards.find((c) => c.mode === "scratch");
+  if (scratch) {
+    const o = document.createElement("option");
+    o.value = scratch.pos; o.textContent = "first card without pre-fill (scratch)";
+    sel.appendChild(o);
+  }
+}
+
+function jumpTo(pos) {
+  if (Number.isInteger(pos) && pos >= 0 && pos < S.total) load(pos);
+  else $("#msg").textContent = `No card ${pos + 1}.`;
+}
+
+// ---------------- definition of the selected point ----------------
+function renderDef() {
+  const p = S.pts[S.sel];
+  const box = $("#defBox");
+  box.hidden = !p;
+  if (!p) return;
+  $("#defLabel").textContent = p.label;
+  const line = (el, k, v) => { el.innerHTML = ""; if (!v) return; const s = document.createElement("span"); s.className = "k"; s.textContent = k; el.append(s, v); };
+  line($("#defMethod"), "Definition:", p.method);
+  line($("#defRule"), "Rule (v1):", p.rule && p.rule !== p.method ? p.rule : "");
+  line($("#defNote"), "Reviewer note:", p.note);
+}
+
 function renderList() {
   const ol = $("#points");
   ol.innerHTML = "";
@@ -241,6 +285,7 @@ function renderList() {
   });
   const sel = ol.children[S.sel];
   if (sel) sel.scrollIntoView({ block: "nearest" });
+  renderDef();
   $("#btnSubmit").disabled = !complete();
 }
 
@@ -410,6 +455,7 @@ async function submit() {
         active_ms: S.activeMs, n_events: S.nEvents,
       });
     }
+    if (S.mode !== "adjudicate") buildJumpMenu();
     if (S.pos >= S.total - 1) { $("#banner").textContent = "All cards done — thank you."; updateProgress(); return; }
     await load(r.next);
   } catch (err) { $("#msg").textContent = `Not saved: ${err.message}`; }
@@ -467,6 +513,14 @@ function wire() {
   $("#refMain").onclick = () => setRef("main");
   $("#refSeries").onclick = () => setRef("series");
   $("#btnUndo").onclick = undo;
+  $("#jump").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); jumpTo(parseInt($("#jump").value, 10) - 1); $("#jump").blur(); }
+  });
+  $("#jumpGroup").onchange = () => {
+    const v = $("#jumpGroup").value;
+    if (v !== "") jumpTo(parseInt(v, 10));
+    $("#jumpGroup").value = ""; $("#jumpGroup").blur();
+  };
   $("#btnRedo").onclick = redo;
   $("#flag").onchange = () => {
     const now = $("#flag").checked;
