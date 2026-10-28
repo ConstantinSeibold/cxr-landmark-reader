@@ -13,7 +13,7 @@ const S = {
   drag: null, activeMs: 0, lastInput: Date.now(), nEvents: 0, refKind: "main",
   view: { x0: 0, y0: 0, x1: 512, y1: 512, sx: 1, sy: 1 },
 };
-const VIEW_W = 720, VIEW_H_MAX = 760, HIT = 10, DRAG_MIN = 2;
+const VIEW_MIN = 320, THUMB_W = 96, HIT = 10, DRAG_MIN = 2;
 
 // ---------------- start ----------------
 async function start() {
@@ -82,6 +82,7 @@ function setRef(kind) {
   const src = c.refs[kind] || c.refs.main;
   $("#ref").hidden = !src;
   if (src) $("#ref").src = src;
+  $("#refChips").hidden = !c.refs.series;
   $("#refMain").classList.toggle("on", kind === "main");
   $("#refSeries").classList.toggle("on", kind === "series");
 }
@@ -90,13 +91,14 @@ async function updateProgress() {
   if (S.mode === "adjudicate") {
     const s = await api("/api/adj/session");
     $("#progressBar").style.width = `${(100 * s.done) / Math.max(1, s.total)}%`;
-    $("#groupProgress").textContent = `${s.done} resolved`;
+    $("#totalProgress").textContent = `${s.done} resolved`;
     return;
   }
   const s = await api(`/api/r/${S.rid}/session`);
   $("#progressBar").style.width = `${(100 * s.done) / s.total}%`;
   const g = s.per_group[S.card.gid];
-  $("#groupProgress").textContent = `${S.card.gid}: ${g.done}/${g.total} · total ${s.done}/${s.total}`;
+  $("#groupProgress").textContent = `${g.done} / ${g.total} done in this group`;
+  $("#totalProgress").textContent = `${s.done} / ${s.total} done`;
 }
 
 // ---------------- geometry ----------------
@@ -105,8 +107,11 @@ function layout() {
   const [x0, y0, x1, y1] = S.full ? [0, 0, 512, 512] : c.box;
   // the 512 px image is squashed from the original; stretch y back to the original aspect
   const ar = c.orig_wh ? c.orig_wh[1] / c.orig_wh[0] : 1;
-  let w = VIEW_W, h = (VIEW_W * ar * (y1 - y0)) / (x1 - x0);
-  if (h > VIEW_H_MAX) { w *= VIEW_H_MAX / h; h = VIEW_H_MAX; }
+  // fit the view into the free stage, keeping the aspect
+  const st = $("#stage"), maxW = Math.max(VIEW_MIN, st.clientWidth), maxH = Math.max(VIEW_MIN, st.clientHeight - 12);
+  const aspect = (ar * (y1 - y0)) / (x1 - x0);
+  let w = maxW, h = maxW * aspect;
+  if (h > maxH) { w = maxH / aspect; h = maxH; }
   const cv = $("#view");
   cv.width = Math.round(w); cv.height = Math.round(h);
   S.view = { x0, y0, x1, y1, sx: cv.width / (x1 - x0), sy: cv.height / (y1 - y0) };
@@ -116,7 +121,7 @@ function layout() {
   b.textContent = c.full ? "View: whole image" : S.full ? "View: whole image (c)" : "View: zoomed (c)";
   b.title = c.full ? "This card is always shown as the whole image" : "Switch between the zoomed crop and the whole image (c)";
   const th = $("#thumb");
-  th.width = 130; th.height = Math.round(130 * ar);
+  th.width = THUMB_W; th.height = Math.round(THUMB_W * ar);
 }
 const toCanvas = (x, y) => [(x - S.view.x0) * S.view.sx, (y - S.view.y0) * S.view.sy];
 const toImage = (px, py) => [S.view.x0 + px / S.view.sx, S.view.y0 + py / S.view.sy];
@@ -530,6 +535,7 @@ function wire() {
   $("#bright").oninput = draw;
   $("#contrast").oninput = draw;
   $("#btnResetView").onclick = resetImage;
+  window.addEventListener("resize", () => { if (S.card) { layout(); draw(); } });
   $("#refMain").onclick = () => setRef("main");
   $("#refSeries").onclick = () => setRef("series");
   $("#btnUndo").onclick = undo;
