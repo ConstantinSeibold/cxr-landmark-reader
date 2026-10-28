@@ -13,68 +13,81 @@
 </div>
 
 <div id="main" class="screen" hidden>
+  <!-- top bar after Google Docs (identity and position left, actions right) with the page box of
+       Chrome's PDF viewer; the progress bar runs along its bottom edge -->
   <header>
     <span id="who"></span>
-    <span id="cardPos"></span>
-    <div id="progress"><div id="progressBar"></div></div>
-    <span id="groupProgress"></span>
-    <span id="jumpBox">
-      <input id="jump" type="number" min="1" placeholder="card #" title="Go to card number (Enter)">
-      <select id="jumpGroup" title="Go to the first card of a group"><option value="">go to…</option></select>
+    <span id="jumpBox" title="Go to card number (g, then Enter)">
+      <input id="jump" type="number" min="1" aria-label="card number"><span id="cardPos"></span>
     </span>
-    <button id="btnExport" title="Save a snapshot of your annotations so far on the server">Export</button>
-    <span id="timer">0:00</span>
-    <button id="helpBtn" title="Keyboard shortcuts (?)">?</button>
+    <select id="jumpGroup" title="Go to the first card of a group"><option value="">go to…</option></select>
+    <span class="grow"></span>
+    <span id="groupProgress" class="muted"></span>
+    <span id="timer" class="muted" title="active reading time on this card">0:00</span>
+    <button id="btnExport" title="Save a snapshot of your annotations so far on the server (Ctrl+S)">Export</button>
+    <button id="helpBtn" class="icon" title="Keyboard shortcuts (?)">?</button>
+    <div id="progress"><div id="progressBar"></div></div>
   </header>
   <div id="work">
     <section id="left">
+      <!-- editing toolbar after Google Docs: undo/redo first, then view toggles, then image adjustments -->
+      <div id="toolbar">
+        <span class="tgroup">
+          <button id="btnUndo" class="icon" title="Undo the last change on this card (Ctrl+Z)">↶</button>
+          <button id="btnRedo" class="icon" title="Redo (Ctrl+Shift+Z / Ctrl+Y)">↷</button>
+        </span>
+        <span class="tgroup">
+          <button id="btnCrop" title="Switch between the zoomed crop and the whole image (c)">View: zoomed (c)</button>
+          <button id="btnMasks" title="Structure outlines (m): solid = own structure, dashed = structure the rule reads">Outlines: off</button>
+          <button id="btnHide" title="Hold to hide the points (h)">Hide points</button>
+        </span>
+        <span class="tgroup">
+          <label title="Brightness ([ / ])">☀ <input id="bright" type="range" min="50" max="200" value="100"></label>
+          <label title="Contrast ({ / })">◐ <input id="contrast" type="range" min="50" max="250" value="100"></label>
+          <button id="btnResetView" class="icon" title="Reset brightness and contrast (0)">↺</button>
+        </span>
+      </div>
       <div id="banner"></div>
       <canvas id="view" width="720" height="720"></canvas>
-      <div id="toolbar">
-        <button id="btnCrop" title="Switch between the zoomed crop and the whole image (c)">View: zoomed (c)</button>
-        <button id="btnMasks" title="Structure outlines (m): solid = own structure, dashed = structure the rule reads">Outlines: off</button>
-        <button id="btnHide" title="Hold h to hide the points">Hide points</button>
-        <label>Brightness <input id="bright" type="range" min="50" max="200" value="100"></label>
-        <label>Contrast <input id="contrast" type="range" min="50" max="250" value="100"></label>
-        <button id="btnResetView">Reset view</button>
-      </div>
       <div id="maskLegend" hidden></div>
     </section>
+    <!-- side panel after Labelbox/CVAT: task on top, object list, details, actions pinned at the bottom -->
     <section id="right">
-      <div id="groupInfo">
-        <div id="groupTitle"></div>
-        <div id="groupRegion"></div>
-        <div id="groupDesc"></div>
-      </div>
-      <ol id="points"></ol>
-      <div id="defBox">
-        <div id="defLabel"></div>
-        <div id="defMethod"></div>
-        <div id="defRule"></div>
-        <div id="defNote"></div>
-      </div>
-      <div id="adjLegend" hidden>
-        <span class="mk a"></span> reader A <span class="mk b"></span> reader B <span class="mk m"></span> mean
-      </div>
-      <label id="flagRow"><input type="checkbox" id="flag"> structure not assessable on this image <span class="muted">(f)</span></label>
-      <textarea id="comment" rows="2" placeholder="comment (optional)"></textarea>
-      <div id="nav">
-        <button id="btnPrev" title="Previous card (Backspace)">◀ Back</button>
-        <button id="btnUndo" title="Undo the last change on this card (Ctrl+Z)">↶ Undo</button>
-        <button id="btnRedo" title="Redo (Ctrl+Shift+Z / Ctrl+Y)">↷ Redo</button>
-        <button id="btnSubmit" class="primary" title="Submit and next (Enter)">Submit ▶</button>
-      </div>
-      <div id="msg"></div>
-      <div id="refRow">
-        <div id="refBox">
-          <div id="refTabs">
-            <button id="refMain" class="on">Reference</button>
-            <button id="refSeries" hidden>All levels</button>
-            <span class="muted">ground truth example</span>
-          </div>
-          <img id="ref" alt="ground-truth reference for this group">
+      <div id="scroll">
+        <div id="groupInfo">
+          <div id="groupTitle"></div>
+          <div id="groupRegion"></div>
+          <div id="groupDesc"></div>
         </div>
-        <canvas id="thumb" width="130" height="130" title="whole image; box = current view"></canvas>
+        <ol id="points"></ol>
+        <div id="defBox">
+          <div id="defLabel"></div>
+          <div id="defMethod"></div>
+          <div id="defRule"></div>
+          <div id="defNote"></div>
+        </div>
+        <div id="adjLegend" hidden>
+          <span class="mk a"></span> reader A <span class="mk b"></span> reader B <span class="mk m"></span> mean
+        </div>
+        <div id="refRow">
+          <div id="refBox">
+            <div id="refTabs">
+              <button id="refMain" class="on" title="Ground-truth example (1)">Reference</button>
+              <button id="refSeries" hidden title="Ground-truth example, all levels (2)">All levels</button>
+            </div>
+            <img id="ref" alt="ground-truth reference for this group">
+          </div>
+          <canvas id="thumb" width="130" height="130" title="whole image; box = current view"></canvas>
+        </div>
+      </div>
+      <div id="actions">
+        <label id="flagRow"><input type="checkbox" id="flag"> structure not assessable on this image <span class="muted">(f)</span></label>
+        <textarea id="comment" rows="2" placeholder="comment (optional)"></textarea>
+        <div id="msg"></div>
+        <div id="nav">
+          <button id="btnPrev" title="Previous card (Backspace)">◀ Back</button>
+          <button id="btnSubmit" class="primary" title="Submit and next (Enter)">Submit ▶</button>
+        </div>
       </div>
     </section>
   </div>
@@ -98,10 +111,15 @@
       <tr><td>Enter</td><td>submit and next card</td></tr>
       <tr><td>Backspace</td><td>previous card</td></tr>
       <tr><td>f</td><td>structure not assessable on this image</td></tr>
+      <tr><td>g</td><td>go to card number</td></tr>
+      <tr><td>Ctrl+S</td><td>export a snapshot</td></tr>
       <tr><th colspan="2">View</th></tr>
       <tr><td>m</td><td>structure outlines (solid: own structure, dashed: structure the rule reads)</td></tr>
       <tr><td>c</td><td>switch zoomed crop / whole image (cards with a zoomed view)</td></tr>
       <tr><td>h (hold)</td><td>hide the points</td></tr>
+      <tr><td>[ / ]</td><td>brightness down / up</td></tr>
+      <tr><td>{ / }</td><td>contrast down / up</td></tr>
+      <tr><td>0</td><td>reset brightness and contrast</td></tr>
       <tr><td>1 / 2</td><td>reference: example / all levels</td></tr>
       <tr><td>?</td><td>this help</td></tr>
       <tr><td>Esc</td><td>cancel a drag / close this help</td></tr>

@@ -197,7 +197,7 @@ def test_jump_and_definitions(browser, study):
         page.fill("#jump", "7")
         page.press("#jump", "Enter")
         wait_card(page, 6)
-        assert page.locator("#cardPos").inner_text().startswith("card 7 /")
+        assert page.locator("#jump").input_value() == "7" and page.locator("#cardPos").inner_text().startswith("/ ")
         # group menu: jump to the first vertebra card
         label = next(o for o in page.locator("#jumpGroup option").all_inner_texts() if o.startswith("G19"))
         page.select_option("#jumpGroup", label=label)
@@ -244,6 +244,23 @@ def test_export_button(browser, study):
         page.wait_for_function("document.querySelector('#msg').textContent.startsWith('Exported')")
         assert "1/" in page.locator("#msg").inner_text()
         assert len(list((study / "exports" / "r1").iterdir())) == 1
+        assert not errors, errors
+
+
+def test_view_and_export_hotkeys(browser, study):
+    with server(study) as url:
+        page, errors = open_reader(browser, url)
+        page.keyboard.press("]")
+        page.keyboard.press("}")
+        assert page.evaluate("[+bright.value, +contrast.value]") == [110, 110]
+        page.keyboard.press("0")
+        assert page.evaluate("[+bright.value, +contrast.value]") == [100, 100]
+        page.keyboard.press("g")
+        assert page.evaluate("document.activeElement.id") == "jump"
+        page.keyboard.press("Escape")
+        assert page.locator("#jump").input_value() == "1"
+        page.keyboard.press("Control+s")
+        page.wait_for_function("document.querySelector('#msg').textContent.startsWith('Exported')")
         assert not errors, errors
 
 

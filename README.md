@@ -117,8 +117,9 @@ Use a separate reader id (e.g. `--readers pilot`) for a pilot so it never mixes 
 - **Order:** group by group (clinical groups first, then vertebrae and ribs, then zones, vessel
   and abdominal points), frontal before lateral, images shuffled per reader. Every submit is saved
   immediately; the session resumes at the first unfinished card.
-- **Navigation:** `card #` box (Enter) and the `go to…` menu (first card of every group with
-  progress, first scratch card) in the header; Back / Submit at the bottom.
+- **Navigation:** card number box (type a number, Enter) and the `go to…` menu (first card of every
+  group with progress, first scratch card) in the header; Back / Submit pinned at the bottom of
+  the side panel. Undo / redo sit at the start of the toolbar above the image.
 - **Blinding:** readers only ever see their own answers.
 
 **Keyboard** (`?` shows this in the app)
@@ -128,15 +129,16 @@ Use a separate reader id (e.g. `--readers pilot`) for a pilot so it never mixes 
 | drag | move a point | Enter | submit, next card | `m` | structure outlines |
 | click | place the selected missing point | Backspace | previous card | `c` | zoomed / whole image |
 | ← → ↑ ↓ | nudge 1 screen px (Shift: 5) | `f` | not assessable | hold `h` | hide the points |
-| Tab / Shift+Tab | next / previous point | | | `1` / `2` | reference: example / all levels |
-| Space | next unresolved point | | | `?` | help |
-| `n` / `u` / `r` | not visible / unsure / reset to pre-fill | | | Esc | cancel a drag, close help |
-| Ctrl+Z | undo (this card) | | | | |
-| Ctrl+Shift+Z, Ctrl+Y | redo | | | | |
+| Tab / Shift+Tab | next / previous point | `g` | go to card number | `[` / `]` | brightness down / up |
+| Space | next unresolved point | Ctrl+S | export a snapshot | `{` / `}` | contrast down / up |
+| `n` / `u` / `r` | not visible / unsure / reset to pre-fill | | | `0` | reset brightness, contrast |
+| Ctrl+Z | undo (this card) | | | `1` / `2` | reference: example / all levels |
+| Ctrl+Shift+Z, Ctrl+Y | redo | | | `?` | help |
+| | | | | Esc | cancel a drag, close help |
 
 ## 3 Export (at any time)
 Finished or not:
-- **In the app:** *Export* in the header saves the current reader's annotations on the server and
+- **In the app:** *Export* in the header (Ctrl+S) saves the current reader's annotations on the server and
   shows the folder.
 - **Command line:** `python -m goldkp.export --data $DATA --readers r1,r2`
 

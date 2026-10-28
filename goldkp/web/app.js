@@ -64,7 +64,8 @@ async function load(pos) {
   $("#groupDesc").textContent = c.group.description;
   $("#refSeries").hidden = !c.refs.series;
   setRef(c.refs.series && S.refKind === "series" ? "series" : "main");
-  $("#cardPos").textContent = `card ${pos + 1} / ${S.total}`;
+  $("#jump").value = pos + 1;
+  $("#cardPos").textContent = `/ ${S.total}`;
   updateProgress();
   layout();
   renderList();
@@ -290,13 +291,15 @@ function renderList() {
   const sel = ol.children[S.sel];
   if (sel) sel.scrollIntoView({ block: "nearest" });
   renderDef();
-  $("#btnSubmit").disabled = !complete();
+  const open = S.pts.filter((p) => !resolved(p)).length;
+  $("#btnSubmit").disabled = open > 0;
+  $("#btnSubmit").title = open ? `${open} landmark${open > 1 ? "s" : ""} still open` : "Submit and next (Enter)";
+  $("#btnUndo").disabled = !S.hist.length;
+  $("#btnRedo").disabled = !S.redo.length;
 }
 
-function complete() {
-  if (S.mode === "adjudicate") return S.pts.every((p) => p.choice && (p.choice !== "new" || p.xy));
-  return S.pts.every((p) => p.status !== "missing");
-}
+const resolved = (p) => (S.mode === "adjudicate" ? !!p.choice && (p.choice !== "new" || !!p.xy) : p.status !== "missing");
+const complete = () => S.pts.every(resolved);
 
 // ---------------- interaction ----------------
 function hitTest(px, py) {
@@ -499,6 +502,19 @@ setInterval(() => {
   $("#timer").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }, 1000);
 
+async function exportNow() {
+  try {
+    const r = await post(`/api/r/${S.rid}/export`, {});
+    $("#msg").style.color = "#2a9d8f";
+    $("#msg").textContent = `Exported ${r.done}/${r.cards} cards (${r.answered} landmarks) to DATA/${r.dir}`;
+    setTimeout(() => { $("#msg").textContent = ""; $("#msg").style.color = ""; }, 8000);
+  } catch (err) { $("#msg").textContent = `Export failed: ${err.message}`; }
+}
+
+// brightness and contrast: the sliders clamp the value to their own range
+function adjust(sel, d) { const el = $(sel); el.value = +el.value + d; draw(); }
+function resetImage() { $("#bright").value = 100; $("#contrast").value = 100; draw(); }
+
 // ---------------- wiring ----------------
 function wire() {
   const cv = $("#view");
@@ -513,21 +529,18 @@ function wire() {
   $("#btnHide").onpointerup = () => { S.hide = false; draw(); };
   $("#bright").oninput = draw;
   $("#contrast").oninput = draw;
-  $("#btnResetView").onclick = () => { $("#bright").value = 100; $("#contrast").value = 100; draw(); };
+  $("#btnResetView").onclick = resetImage;
   $("#refMain").onclick = () => setRef("main");
   $("#refSeries").onclick = () => setRef("series");
   $("#btnUndo").onclick = undo;
-  $("#btnExport").onclick = async () => {
-    try {
-      const r = await post(`/api/r/${S.rid}/export`, {});
-      $("#msg").style.color = "#2a9d8f";
-      $("#msg").textContent = `Exported ${r.done}/${r.cards} cards (${r.answered} landmarks) to DATA/${r.dir}`;
-      setTimeout(() => { $("#msg").textContent = ""; $("#msg").style.color = ""; }, 8000);
-    } catch (err) { $("#msg").textContent = `Export failed: ${err.message}`; }
-  };
+  $("#btnExport").onclick = exportNow;
   $("#jump").addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); jumpTo(parseInt($("#jump").value, 10) - 1); $("#jump").blur(); }
+    if (e.key === "Escape") $("#jump").blur();
   });
+  // the box shows the current card again when left without jumping (as in Chrome's PDF viewer)
+  $("#jump").addEventListener("focus", () => $("#jump").select());
+  $("#jump").addEventListener("blur", () => { if (S.card) $("#jump").value = S.pos + 1; });
   $("#jumpGroup").onchange = () => {
     const v = $("#jumpGroup").value;
     if (v !== "") jumpTo(parseInt(v, 10));
@@ -555,6 +568,8 @@ function wire() {
     if (k === "?") { $("#help").hidden = !$("#help").hidden; return; }
     if ((e.ctrlKey || e.metaKey) && (k.toLowerCase() === "y" || (k.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); redo(); return; }
     if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "z") { e.preventDefault(); undo(); return; }
+    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "s") { e.preventDefault(); if (S.mode !== "adjudicate") exportNow(); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (k.startsWith("Arrow")) {
       e.preventDefault();
       const st = e.shiftKey ? 5 : 1;
@@ -574,6 +589,10 @@ function wire() {
     else if (k === "1") setRef("main");
     else if (k === "2" && S.card.refs.series) setRef("series");
     else if (k === "h" && !S.hide) { S.hide = true; draw(); }
+    else if (k === "g") { e.preventDefault(); $("#jump").focus(); }
+    else if (k === "[" || k === "]") adjust("#bright", k === "]" ? 10 : -10);
+    else if (k === "{" || k === "}") adjust("#contrast", k === "}" ? 10 : -10);
+    else if (k === "0") resetImage();
   });
   document.addEventListener("keyup", (e) => { if (e.key === "h" && S.hide) { S.hide = false; draw(); } });
 }
