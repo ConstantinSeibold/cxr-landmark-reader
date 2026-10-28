@@ -1,54 +1,62 @@
 # cxr-landmark-reader
 
 A small local web app in which two readers correct pre-filled anatomical landmarks on chest
-radiographs, card by card, to build a gold standard and the per-landmark inter-reader tolerances
-used by an object-keypoint-similarity metric.
+radiographs, card by card. The result is a gold standard, per-landmark inter-reader tolerances
+(the σ of an object-keypoint-similarity metric), and an agreement report.
 
 ![demo](docs/demo.gif)
 
-*The demo and all screenshots use open PAXRay++ images. The app is built for credentialed data
-(e.g. MIMIC-CXR): it only binds to localhost, serves images by opaque index, and this repository
-contains code only — never images, identifiers or reader data.*
+> **Data use.** The app is built for credentialed data such as MIMIC-CXR. It only binds to
+> localhost, serves images by opaque index and never shows image identifiers. This repository
+> holds code only; the demo, screenshots and browser tests use open PAXRay++ images. Study
+> folders, exports and bundles contain image identifiers (and, with `--with-images`, the images):
+> keep them on machines covered by the data use agreement — never on GitHub or cloud storage.
 
-## How reading works
-- **Cards.** One card = one image × one landmark group (e.g. *G02 costophrenic angles*). Long
-  series are split into level batches (vertebrae T1–4/T5–8/T9–12/L1–2; ribs by side and level),
-  and every point of a series is numbered.
-- **View.** Small and repeated structures are shown as a zoomed crop around the predicted masks
-  (the same framing with or without pre-fill), with a whole-image thumbnail marking the crop. The
-  display is aspect-corrected; coordinates are stored in the 512 px frame.
-- **Reference.** Every card shows a ground-truth example of its group (PAXRay++ silver landmarks
-  with legend, the same colour per landmark as on the card); series groups also show all levels.
-- **Assistance.** Toggleable segmentation masks of the card's structures (`m`), brightness and
-  contrast, crop/full view (`c`), hold `h` to hide the points. Hovering a landmark shows its rule.
-- **Per point.** `ok` by default, drag → `moved`, click to place a missing point → `placed`,
-  `n` → not visible, `u` → unsure, `r` → back to the pre-fill. A card-level flag marks a structure
-  that cannot be assessed. Images flagged `no_prefill` are read from scratch with a guided
-  "Place: …" sequence (anchoring check).
-- **Order and blinding.** Group-major (clinical groups first, then vertebrae/ribs, then abstract
-  groups), frontal before lateral, images shuffled per reader. Readers only ever see their own
-  records. Progress is saved per submit and resumes at the first open card.
+**Contents:** [Install](#install) · [1 Get a study](#1-get-a-study) · [2 Read](#2-read) ·
+[3 Export](#3-export-at-any-time) · [4 Import readers' work](#4-import-readers-work) ·
+[5 Aggregate and adjudicate](#5-aggregate-adjudicate-finalise) · [6 Move a study](#6-move-a-study) ·
+[Testing](#testing) · [Files](#files-and-formats)
 
-| | |
-|---|---|
-| ![card](docs/screenshots/01_card.png) | ![masks](docs/screenshots/03_masks.png) |
-| ![series](docs/screenshots/04_series_reference.png) | ![scratch](docs/screenshots/06_scratch_done.png) |
-| ![help](docs/screenshots/07_help.png) | ![adjudication](docs/screenshots/08_adjudication.png) |
+---
 
-## Setup
+## Install
+Python 3.10–3.12.
 ```bash
+git clone git@github.com:ConstantinSeibold/cxr-landmark-reader.git && cd cxr-landmark-reader
 pip install -r requirements.txt
-# browser tests / demo recording only:
-pip install playwright && python -m playwright install chromium
+
+# browser tests and demo recording only
+pip install playwright
+python -m playwright install chromium          # headless Chromium (~120 MB, cached in ~/.cache/ms-playwright)
 ```
 
-## Building a study
-All inputs are passed as paths; nothing is hard-coded. `KP_PREP` is the landmark-definition
-repository (taxonomy + extraction rules), `DATA` the study folder (keep it outside any synced or
-public location).
+## 1 Get a study
+A *study* is one folder (`$DATA`) plus the images it refers to (`$IMAGE_ROOT`):
+```
+$DATA/
+  static/     vocab.json  definitions.json  categories.json   landmark vocabulary, groups, definitions
+  refs/       G##_<view>[_series].png  refs_manifest.json     ground-truth reference image per group
+  prefill/<version>/<image id>.json                           pre-filled points + structure masks
+  cards.json                                                  frozen card list (sha) + image list
+  readers/<reader>/decisions.jsonl, state.json                created while reading
+  exports/<reader>/<time>/                                    created by exports
+```
+
+### a) Unpack a study someone sent you
+```bash
+python -m goldkp.project unpack --zip study.zip --to $DATA --images $IMAGE_ROOT   # your local copy of the images
+python -m goldkp.project unpack --zip study.zip --to $DATA                        # bundle that includes the images
+```
+Every image is checked against the checksum recorded when the study was packed; missing or
+different files are reported and the command exits with an error. Then go to [2 Read](#2-read).
+
+### b) Build a study from sources
+Inputs: `KP_PREP` (the landmark definitions: taxonomy and extraction rules), the PAXRay++
+keypoint files (`$PAXRAY`), a `selection.csv` (`dicom_id, path, image` = frontal|lateral,
+`no_prefill`), model predictions for the selected images (`preds.pkl`), and the MIMIC-CXR metadata.
 ```bash
 python build/build_vocab.py   --kp-prep $KP_PREP --out $DATA/static \
-       --categories $PAXRAY/annotations/test_kp_v1.json                       # vocabulary, groups, definitions
+       --categories $PAXRAY/annotations/test_kp_v1.json
 python build/render_refs.py   --vocab $DATA/static/vocab.json \
        --kp-json $PAXRAY/annotations/val_kp_v1.json --image-root $PAXRAY --out $DATA/refs
 python build/build_prefill.py --kp-prep $KP_PREP --selection selection.csv --preds preds.pkl \
@@ -58,59 +66,176 @@ python build/build_prefill.py --kp-prep $KP_PREP --selection selection.csv --pre
 python build/build_cards.py   --selection selection.csv --prefill $DATA/prefill/hybrid_v1 \
        --vocab $DATA/static/vocab.json --out $DATA/cards.json
 ```
-`selection.csv` needs `dicom_id, path, image (frontal|lateral), no_prefill`. Pre-fill sources:
-`hybrid` (learned landmarks where the definition is unchanged and the side labels are consistent,
-otherwise the final rules on the predicted masks), `rules_v0masks`, `v1_learned`. The card list
-and the pre-fill version are frozen: the server refuses to resume a reader on a different version.
+- **Pre-fill sources:** `hybrid` uses the model's learned landmark where its definition is unchanged
+  and the side labels are consistent, otherwise the final rules applied to the model's predicted
+  masks; `rules_v0masks` uses the rules everywhere; `v1_learned` a model trained on the final
+  vocabulary. The masks of each landmark's own structure *and* of the structures its rule reads
+  are stored for the outline overlay.
+- **Cards:** one image × one landmark group; vertebrae split into T1–4 / T5–8 / T9–12 / L1–2,
+  ribs by side and level. Each card has a crop around its structures' masks (identical with or
+  without pre-fill); groups that need the whole thorax are shown whole.
+- **Freeze before reading:** the card list (`sha`) and pre-fill version are recorded with every
+  answer; the server refuses to resume a reader on a different version
+  (`--allow-version-change` overrides).
 
-## Reading, aggregation, adjudication
+Check a study at any time: `python -m goldkp.project verify --data $DATA --images $IMAGE_ROOT`.
+
+## 2 Read
 ```bash
-python -m goldkp.server --data $DATA --images $IMAGE_ROOT --readers r1,r2      # http://127.0.0.1:8765
-python aggregate.py --data $DATA --readers r1,r2 --categories $PAXRAY/annotations/test_kp_v1.json \
-       --selection selection.csv
-python -m goldkp.server --data $DATA --images $IMAGE_ROOT --mode adjudicate
-python aggregate.py --data $DATA --readers r1,r2 --categories ... --final
+python -m goldkp.server --data $DATA --images $IMAGE_ROOT --readers r1,r2 --port 8765
 ```
-`aggregate.py` reports visibility agreement (Cohen's κ, raw agreement, PABAK) and per-landmark
-tolerances: with *d* the distance between the readers and *s* = √(mask area),
-σ = √(mean(d²/s²)/4), estimated robustly from the median (d²/s² ~ 2σ²χ²₂). Points where both
-readers agree within 3√2·σ·s become the mean; visibility conflicts, unsure points and larger
-distances go to adjudication (readers shown as A/B in random order). Outputs: `gold_kp_v1.json`
-(COCO keypoints keyed by image id, no pixels), `sigma_table.csv`, `agreement_report.md`
-(per group, time per card, anchoring check, pre-fill error by source).
+Open <http://127.0.0.1:8765> and pick your reader id. The server only binds to loopback; remote
+readers use an SSH tunnel: `ssh -L 8765:localhost:8765 user@server`, then <http://localhost:8765>.
+Use a separate reader id (e.g. `--readers pilot`) for a pilot so it never mixes with r1/r2.
 
-**Partial exports.** At any time, finished or not: the *Export* button in the header (the reader's
-own annotations) or `python -m goldkp.export --data $DATA --readers r1,r2` writes
-`annotations.csv`, `annotations_by_image.json`, `annotations_coco.json` (gold categories; unanswered
-landmarks have v = 0) and `summary.json` (progress per group) to `$DATA/exports/<reader>/<time>/` on
-the server. `aggregate.py` also runs on a partial study and uses only the cards both readers have
-finished.
+| | |
+|---|---|
+| ![card](docs/screenshots/01_card.png) | ![outlines](docs/screenshots/03b_outlines_costophrenic.png) |
+| ![definition](docs/screenshots/09_definition.png) | ![series](docs/screenshots/04_series_reference.png) |
+| ![scratch](docs/screenshots/06_scratch_done.png) | ![help](docs/screenshots/07_help.png) |
 
-## Moving studies and importing readers' work
+**On every card**
+- **Image:** the zoomed crop (aspect-corrected; coordinates are stored in the 512 px frame) and a
+  whole-image thumbnail marking the crop. `View: zoomed / whole image` (`c`) switches; it is
+  disabled on cards that are always shown whole.
+- **Points:** coloured as in the reference; series points carry their level (T5, 7R, …).
+- **Outlines** (`m`): solid = the landmark's own structure, dashed = a structure its rule reads
+  (e.g. the visible lung for the costophrenic vertex); a legend names them. On real images these
+  are the predicted masks the pre-fill rules ran on.
+- **Reference:** a ground-truth example of the group (PAXRay++), same colours; vertebra and rib
+  groups also show *all levels* (`2`).
+- **Definition panel:** for the selected point — the definition, the v1 rule and the reviewers'
+  note. Hovering a point in the list shows the same text.
+- **Status per point:** `ok` (pre-fill accepted) · `moved` · `placed` (was missing) ·
+  `not visible` · optional `unsure`. A card can only be submitted when every point is resolved.
+- **Scratch cards** (images flagged `no_prefill`, the anchoring check): no points are shown; a
+  "Place: …" banner walks through the landmarks, each click places the next one.
+- **Not assessable** (`f`): marks the whole structure as not visible on this image; add a comment
+  if useful.
+- **Order:** group by group (clinical groups first, then vertebrae and ribs, then zones, vessel
+  and abdominal points), frontal before lateral, images shuffled per reader. Every submit is saved
+  immediately; the session resumes at the first unfinished card.
+- **Navigation:** `card #` box (Enter) and the `go to…` menu (first card of every group with
+  progress, first scratch card) in the header; Back / Submit at the bottom.
+- **Blinding:** readers only ever see their own answers.
+
+**Keyboard** (`?` shows this in the app)
+
+| Points | | Card | | View | |
+|---|---|---|---|---|---|
+| drag | move a point | Enter | submit, next card | `m` | structure outlines |
+| click | place the selected missing point | Backspace | previous card | `c` | zoomed / whole image |
+| ← → ↑ ↓ | nudge 1 screen px (Shift: 5) | `f` | not assessable | hold `h` | hide the points |
+| Tab / Shift+Tab | next / previous point | | | `1` / `2` | reference: example / all levels |
+| Space | next unresolved point | | | `?` | help |
+| `n` / `u` / `r` | not visible / unsure / reset to pre-fill | | | Esc | cancel a drag, close help |
+| Ctrl+Z | undo (this card) | | | | |
+| Ctrl+Shift+Z, Ctrl+Y | redo | | | | |
+
+## 3 Export (at any time)
+Finished or not:
+- **In the app:** *Export* in the header saves the current reader's annotations on the server and
+  shows the folder.
+- **Command line:** `python -m goldkp.export --data $DATA --readers r1,r2`
+
+Each export goes to `$DATA/exports/<reader>/<time>/`:
+
+| File | Content |
+|---|---|
+| `annotations.csv` | one row per landmark of every answered card: status, unsure, x/y (512 frame), pre-fill and its source, card flag, time |
+| `annotations_by_image.json` | `{image id: {class: {landmark: [x, y, v, status, unsure]}}}` |
+| `annotations_coco.json` | COCO keypoints with the gold categories; unanswered or not-visible landmarks have v = 0; no pixels or paths (loads in pycocotools / CVAT) |
+| `summary.json` | progress per group and view, versions, whether the reading is complete |
+| `decisions.jsonl` | the reader's raw log — lossless, importable (next section) |
+
+## 4 Import readers' work
+When a reader worked on another copy of the study (their own machine, an earlier session), merge
+their answers into the main study:
 ```bash
-# study -> one zip (reader logs included, image checksums recorded, images left out)
-python -m goldkp.project pack   --data $DATA --images $IMAGE_ROOT --out study.zip
-python -m goldkp.project unpack --zip study.zip --to $DATA2 --images $LOCAL_IMAGE_ROOT   # checks every image
-python -m goldkp.project verify --data $DATA2 --images $LOCAL_IMAGE_ROOT
-# with the images inside (credentialed recipients only, never public/cloud storage):
-python -m goldkp.project pack   --data $DATA --images $IMAGE_ROOT --out study.zip --with-images
-python -m goldkp.project unpack --zip study.zip --to $DATA2                           # uses the bundled images
-# merge a reader's work (an export folder, a decisions.jsonl or another study) into a study
-python -m goldkp.project import-reader --data $DATA --source $DATA/exports/pilot/<time> --rid pilot --as r1
+python -m goldkp.project import-reader --data $DATA --source <export folder | decisions.jsonl | other study> --rid r1
+python -m goldkp.project import-reader --data $DATA --source $DATA/exports/pilot/<time> --rid pilot --as r1   # rename
 ```
-`unpack` refuses a non-empty target and reports images that are missing or differ from the ones the
-study was built on. `import-reader` requires the same card list and pre-fill version, skips records
-it already has, keeps the newest answer per card, and keeps the previous log as
-`decisions.before_import_<time>.jsonl`. Every export contains the reader's raw `decisions.jsonl`, so
-exports are importable. The COCO export loads in pycocotools or CVAT (COCO keypoints).
+- Records made on a different card list or pre-fill version are refused.
+- Records already present are skipped (importing the same export twice changes nothing).
+- Where both copies answered the same card, the newest answer wins.
+- The previous log is kept as `decisions.before_import_<time>.jsonl`.
 
-Remote readers: the server only binds to loopback; use an SSH tunnel (`ssh -L 8765:localhost:8765`).
+Restart the server afterwards so it reloads the reader's state.
 
-## Tests
+## 5 Aggregate, adjudicate, finalise
 ```bash
-python -m pytest tests -q                       # unit + API tests on a synthetic study
+python aggregate.py --data $DATA --readers r1,r2 --categories $DATA/static/categories.json --selection selection.csv
+python -m goldkp.server --data $DATA --images $IMAGE_ROOT --mode adjudicate      # pick "adjudicator"
+python aggregate.py --data $DATA --readers r1,r2 --categories $DATA/static/categories.json --final
+```
+- Works on a partial study: only cards both readers have finished are used (the count is printed).
+- **Visibility:** Cohen's κ, raw agreement and PABAK per landmark type.
+- **Tolerance:** with *d* the distance between the readers and *s* = √(area of the structure's
+  mask), σ = √(mean(d²/s²)/4); the robust estimate uses the median (d²/s² ~ 2σ²χ²₂), so one gross
+  disagreement cannot inflate the tolerance that should flag it. Vertebra and rib landmarks are
+  pooled over levels. κ_k = 2σ_k for the OKS.
+- **Gold:** both visible, neither unsure, d ≤ 3√2·σ·s → mean of the readers; both not visible →
+  not visible; everything else → adjudication queue.
+- **Adjudication mode** shows the two readers as A (circle) and B (square) in random order per card,
+  plus their mean (diamond); per landmark choose A / B / mean / new position / not visible.
+  `--final` merges the decisions into the gold files.
+- **Outputs** in `$DATA/out/`: `gold_kp_v1.json` (COCO, no pixels), `gold_by_dicom.json`,
+  `sigma_table.csv`, `agreement_report.md` (per group; time per landmark; anchoring check on the
+  scratch images; pre-fill error by source), `adjudication_queue.json`, `adjudication_map.json`.
+
+![adjudication](docs/screenshots/08_adjudication.png)
+
+## 6 Move a study
+```bash
+python -m goldkp.project pack --data $DATA --images $IMAGE_ROOT --out study.zip                 # images left out
+python -m goldkp.project pack --data $DATA --images $IMAGE_ROOT --out study.zip --with-images   # images inside
+```
+The bundle holds the whole study folder including reader logs (exports are left out) and a
+checksum of every image; unpack it with [1a](#a-unpack-a-study-someone-sent-you). Bundles with
+images may only go to recipients who hold their own credentials for the source data.
+
+---
+
+## Testing
+```bash
+# unit and API tests on a synthetic study (no real data needed)
+python -m pytest tests -q
+
+# demo study from open PAXRay++ images (used by the browser tests, screenshots and GIF)
 python build/build_demo.py --kp-json $PAXRAY/annotations/test_kp_v1.json --image-root $PAXRAY \
        --static $DATA/static --refs $DATA/refs --out demo_data
-PAXRAY_KP_JSON=$PAXRAY/annotations/test_kp_v1.json python -m pytest e2e -q   # Playwright, headless Chromium
-python -m e2e.make_demo --gt $PAXRAY/annotations/test_kp_v1.json             # docs/ screenshots + GIF
+
+# end-to-end tests in headless Chromium (Playwright)
+PAXRAY_KP_JSON=$PAXRAY/annotations/test_kp_v1.json python -m pytest e2e -q
+
+# re-record docs/screenshots and docs/demo.gif
+python -m e2e.make_demo --gt $PAXRAY/annotations/test_kp_v1.json
+```
+- `tests/`: card coverage and batching, reader order, storage recovery and version lock, submit
+  validation, blinding, security headers, outlines, exports, bundles (with/without images,
+  tampered images), reader import, and aggregation (recovers a known σ, queues a planted
+  disagreement, merges an adjudication).
+- `e2e/`: starts the server on a copy of the demo study and drives the page: editing, drag accuracy
+  with an off-centre grab, undo/redo, keyboard nudging and flags, outlines and crop toggle, jump
+  menu and definitions, scratch placement, resume after reload, blinding of the second reader,
+  the Export button, and adjudication end to end. Screenshots of each step go to `e2e/artifacts/`.
+  The adjudication test is skipped unless `PAXRAY_KP_JSON` is set.
+- The app's Content-Security-Policy forbids `eval`, which Playwright's helpers need; the browser
+  tests therefore open pages with `bypass_csp=True`, and the header itself is checked in `tests/`.
+
+## Files and formats
+```
+goldkp/      server.py (FastAPI app)  cards.py (cards, order, rule partners)  store.py (reader logs)
+             export.py (partial exports)  project.py (pack / unpack / verify / import-reader)  web/
+build/       build_vocab.py  render_refs.py  build_prefill.py  build_cards.py  build_demo.py
+aggregate.py agreement, tolerances, gold, adjudication queue
+tests/  e2e/  docs/
+```
+One line of `decisions.jsonl` per submit (the last one per card counts):
+```json
+{"ts": 1730000000.0, "rid": "r1", "pos": 12, "card_id": "…|frontal|G02|", "view": "frontal", "gid": "G02",
+ "mode": "prefill", "cards_sha": "…", "prefill_version": "hybrid_v1",
+ "points": [{"key": "left lung|costophrenic_pulmonary", "status": "moved", "unsure": false,
+             "xy": [101.4, 377.9], "prefill": [98.0, 381.0, 2, "v1_rules"], "n_edits": 1}],
+ "card_flag": null, "comment": "", "active_ms": 9200, "n_events": 3}
 ```
