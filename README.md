@@ -86,6 +86,24 @@ landmarks have v = 0) and `summary.json` (progress per group) to `$DATA/exports/
 the server. `aggregate.py` also runs on a partial study and uses only the cards both readers have
 finished.
 
+## Moving studies and importing readers' work
+```bash
+# study -> one zip (reader logs included, image checksums recorded, images left out)
+python -m goldkp.project pack   --data $DATA --images $IMAGE_ROOT --out study.zip
+python -m goldkp.project unpack --zip study.zip --to $DATA2 --images $LOCAL_IMAGE_ROOT   # checks every image
+python -m goldkp.project verify --data $DATA2 --images $LOCAL_IMAGE_ROOT
+# with the images inside (credentialed recipients only, never public/cloud storage):
+python -m goldkp.project pack   --data $DATA --images $IMAGE_ROOT --out study.zip --with-images
+python -m goldkp.project unpack --zip study.zip --to $DATA2                           # uses the bundled images
+# merge a reader's work (an export folder, a decisions.jsonl or another study) into a study
+python -m goldkp.project import-reader --data $DATA --source $DATA/exports/pilot/<time> --rid pilot --as r1
+```
+`unpack` refuses a non-empty target and reports images that are missing or differ from the ones the
+study was built on. `import-reader` requires the same card list and pre-fill version, skips records
+it already has, keeps the newest answer per card, and keeps the previous log as
+`decisions.before_import_<time>.jsonl`. Every export contains the reader's raw `decisions.jsonl`, so
+exports are importable. The COCO export loads in pycocotools or CVAT (COCO keypoints).
+
 Remote readers: the server only binds to loopback; use an SSH tunnel (`ssh -L 8765:localhost:8765`).
 
 ## Tests

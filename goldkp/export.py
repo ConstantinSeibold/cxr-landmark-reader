@@ -6,6 +6,7 @@ Writes to OUT/<rid>/<timestamp>/:
   annotations_coco.json      COCO keypoints with the gold categories (static/categories.json);
                              unanswered or not-visible landmarks have v = 0
   summary.json               progress per group and view, versions, timestamp
+  decisions.jsonl            the reader's raw log (lossless; python -m goldkp.project import-reader)
 
 usage: python -m goldkp.export --data DATA [--readers r1,r2] [--out DATA/exports]
 """
@@ -94,6 +95,10 @@ def export_reader(data: Path, rid: str, out_root: Path | None = None) -> dict:
     summary = {"reader": rid, "exported": stamp, "cards_sha": cj["sha"], "prefill_version": cj["prefill_version"],
                "complete": total["done"] == total["cards"], "total": total, "per_group": progress}
     json.dump(summary, open(out / "summary.json", "w"), indent=1)
+    # the raw log too: lossless, so the snapshot can be imported into another copy of the study
+    log = data / "readers" / rid / "decisions.jsonl"
+    if log.exists():
+        (out / "decisions.jsonl").write_bytes(log.read_bytes())
     return {"dir": str(out), **total}
 
 

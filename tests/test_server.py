@@ -118,7 +118,7 @@ def test_partial_export(study, client_factory):
     assert r["done"] == 1 and r["cards"] == 7 and r["answered"] == 2 and r["dir"].startswith("exports/r1/")
     out = data / r["dir"]
     assert {p.name for p in out.iterdir()} == {"annotations.csv", "annotations_by_image.json",
-                                              "annotations_coco.json", "summary.json"}
+                                              "annotations_coco.json", "summary.json", "decisions.jsonl"}
     summ = json.load(open(out / "summary.json"))
     assert not summ["complete"] and summ["per_group"]["G01|frontal"]["done"] == 1
     coco = json.load(open(out / "annotations_coco.json"))
