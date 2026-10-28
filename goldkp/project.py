@@ -12,7 +12,7 @@
 A bundle holds image identifiers and landmark coordinates derived from the images: move it only
 between machines covered by the data use agreement of the source data.
 
-usage: python -m goldkp.project pack --data DATA --images ROOT --out study.zip [--with-images]
+usage: python -m goldkp.project pack --data DATA --images ROOT --out study.zip [--with-images] [--without-readers]
        python -m goldkp.project unpack --zip study.zip --to DATA [--images ROOT]
        python -m goldkp.project verify --data DATA --images ROOT
        python -m goldkp.project import-reader --data DATA --source PATH --rid r1 [--as r1]
@@ -30,7 +30,6 @@ from pathlib import Path
 from .store import ReaderStore
 
 MANIFEST = "project_manifest.json"
-SKIP_DIRS = {"exports"}
 NOTICE = ("This bundle contains image identifiers and landmark coordinates derived from the images. "
           "Move it only between machines covered by the source data's use agreement.")
 NOTICE_IMAGES = ("This bundle CONTAINS THE IMAGES. For credentialed data (e.g. MIMIC-CXR) every recipient must "
@@ -111,7 +110,20 @@ def import_reader(data: Path, source: Path, rid: str, as_rid: str | None = None)
             "skipped_duplicates": len(recs) - len(new), "cards_done": st.done, "cards_total": len(cj["cards"])}
 
 
-def pack(data: Path, images: Path, out: Path, with_images: bool = False) -> dict:
+def study_files(data: Path, with_readers: bool) -> list[Path]:
+    """What a study consists of -- nothing else is bundled (no exports, outputs, backups or stray files)."""
+    cj = json.load(open(data / "cards.json"))
+    roots = [data / "static", data / "refs", data / "prefill" / cj["prefill_version"]]
+    if with_readers:
+        roots.append(data / "readers")
+    files = [data / "cards.json"]
+    for r in roots:
+        if r.exists():
+            files += [f for f in sorted(r.rglob("*")) if f.is_file() and not f.name.endswith(".tmp")]
+    return files
+
+
+def pack(data: Path, images: Path, out: Path, with_images: bool = False, with_readers: bool = True) -> dict:
     cj = json.load(open(data / "cards.json"))
     imgs = []
     for im in cj["images"]:
@@ -121,19 +133,17 @@ def pack(data: Path, images: Path, out: Path, with_images: bool = False) -> dict
         imgs.append({"path": im["image"], "sha256": sha256(p)})
     manifest = {"created": time.strftime("%Y-%m-%d %H:%M:%S"), "cards_sha": cj["sha"],
                 "prefill_version": cj["prefill_version"], "images": imgs, "images_included": with_images,
-                "notice": NOTICE_IMAGES if with_images else NOTICE}
-    n = 0
+                "readers_included": with_readers, "notice": NOTICE_IMAGES if with_images else NOTICE}
+    files = study_files(data, with_readers)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr(MANIFEST, json.dumps(manifest, indent=1))
-        for f in sorted(data.rglob("*")):
-            rel = f.relative_to(data)
-            if f.is_file() and rel.parts[0] not in SKIP_DIRS and not f.name.endswith(".tmp"):
-                z.write(f, str(rel))
-                n += 1
+        for f in files:
+            z.write(f, str(f.relative_to(data)))
         if with_images:
             for im in imgs:                                    # stored as-is (JPEG/PNG do not compress)
                 z.write(images / im["path"], f"images/{im['path']}", compress_type=zipfile.ZIP_STORED)
-    return {"files": n, "images": len(imgs), "images_included": with_images, "zip": str(out)}
+    return {"files": len(files), "images": len(imgs), "images_included": with_images,
+            "readers_included": with_readers, "zip": str(out)}
 
 
 def unpack(zpath: Path, to: Path, images: Path | None = None) -> dict:
@@ -173,6 +183,7 @@ def main() -> None:
     a = sub.add_parser("pack"); a.add_argument("--data", type=Path, required=True)
     a.add_argument("--images", type=Path, required=True); a.add_argument("--out", type=Path, required=True)
     a.add_argument("--with-images", action="store_true", help="include the image files (see the notice)")
+    a.add_argument("--without-readers", action="store_true", help="leave the readers' answers out (data for new readers)")
     a = sub.add_parser("unpack"); a.add_argument("--zip", type=Path, required=True)
     a.add_argument("--to", type=Path, required=True)
     a.add_argument("--images", type=Path, help="local image root; default: the images inside the bundle")
@@ -183,7 +194,7 @@ def main() -> None:
     a.add_argument("--as", dest="as_rid")
     args = ap.parse_args()
     if args.cmd == "pack":
-        r = pack(args.data, args.images, args.out, args.with_images)
+        r = pack(args.data, args.images, args.out, args.with_images, not args.without_readers)
         what = "images" if r["images_included"] else "image checksums"
         print(f"packed {r['files']} files and {r['images']} {what} -> {r['zip']}\n"
               f"{NOTICE_IMAGES if r['images_included'] else NOTICE}")

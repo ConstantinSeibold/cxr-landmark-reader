@@ -83,3 +83,23 @@ def test_bundle_with_images_runs_on_its_own(study, client_factory, tmp_path):
     pack(data, imgs, z2)
     with pytest.raises(SystemExit, match="no images"):
         unpack(z2, tmp_path / "copy2")
+
+
+def test_pack_contains_only_the_study(study, client_factory, tmp_path):
+    import zipfile
+    data, imgs = study
+    submit_some(client_factory(data, imgs), "r1", 1)
+    (data / "exports").mkdir()
+    (data / "exports" / "x.csv").write_text("x")
+    (data / "prefill" / "old_version").mkdir()
+    (data / "prefill" / "old_version" / "a.json").write_text("{}")
+    (data / "preview.png").write_bytes(b"x")
+    z = tmp_path / "data.zip"
+    pack(data, imgs, z, with_images=True, with_readers=False)
+    names = zipfile.ZipFile(z).namelist()
+    assert not any(n.startswith(("exports/", "readers/", "prefill/old_version")) or n == "preview.png" for n in names)
+    assert {"cards.json", "project_manifest.json"} <= set(names) and sum(n.startswith("images/") for n in names) == 3
+    out = unpack(z, tmp_path / "fresh")
+    assert out["missing"] == 0 and out["changed"] == 0
+    c = client_factory(tmp_path / "fresh", tmp_path / "fresh" / "images", readers=("r2",))
+    assert c.get("/api/r/r2/session").json()["done"] == 0

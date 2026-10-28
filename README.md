@@ -13,7 +13,7 @@ radiographs, card by card. The result is a gold standard, per-landmark inter-rea
 > keep them on machines covered by the data use agreement — never on GitHub or cloud storage.
 
 **Contents:** [Install](#install) · [1 Get a study](#1-get-a-study) · [2 Read](#2-read) ·
-[Reader packages](#reader-packages-annotate-on-the-readers-own-machine) ·
+[For readers](#for-readers-reading-on-your-own-machine) ·
 [3 Export](#3-export-at-any-time) · [4 Import readers' work](#4-import-readers-work) ·
 [5 Aggregate and adjudicate](#5-aggregate-adjudicate-finalise) · [6 Move a study](#6-move-a-study) ·
 [Testing](#testing) · [Files](#files-and-formats)
@@ -187,21 +187,45 @@ python aggregate.py --data $DATA --readers r1,r2 --categories $DATA/static/categ
 
 ![adjudication](docs/screenshots/08_adjudication.png)
 
-## Reader packages (annotate on the reader's own machine)
-```bash
-python build/make_reader_package.py --data $DATA --images $IMAGE_ROOT --readers r1,r2 --out-dir release/
-```
-One zip per reader with the app, the study *including its images*, `start.sh` / `start.bat` with the
-reader id fixed, and a short README. The reader unzips it, runs the start script (the first start
-installs the app with `uv` or the standard `venv`; Python 3.10–3.14), reads in the browser and sends
-back an *Export* folder, which you merge with `import-reader` (section 4). Reader logs, exports and
-unused pre-fill versions of the source study are left out. The zips contain the images: credentialed
-recipients and agreed channels only.
+## For readers (reading on your own machine)
+You receive one data zip from the study coordinator; everything else is in this repository.
+1. **Install** (once): Python 3.10–3.14, then
+   ```bash
+   git clone git@github.com:ConstantinSeibold/cxr-landmark-reader.git && cd cxr-landmark-reader
+   python -m venv .venv && source .venv/bin/activate        # Windows: .venv\Scripts\activate
+   pip install -r requirements.txt
+   ```
+   (On Ubuntu/Debian `python -m venv` may need `sudo apt install python3-venv`.)
+2. **Import the data** (once):
+   ```bash
+   python -m goldkp.project unpack --zip gold_study_data.zip --to study
+   ```
+   This checks every image against its checksum; it must report `missing [] different []`.
+3. **Start** with the reader id you were given (r1 or r2) and open <http://127.0.0.1:8765> in Chrome or Edge:
+   ```bash
+   python -m goldkp.server --data study --images study/images --readers r1
+   ```
+   Keep the terminal open while reading. Every submitted card is saved at once; stop at any time and
+   start again with the same command to continue where you left off.
+4. **Read** (section [2](#2-read)): correct the points, Enter for the next card; `n` not visible,
+   `u` unsure, `f` not assessable, Ctrl+Z undo, `?` for all keys. Prefer *unsure* to guessing.
+5. **Send your results**: click *Export* and send the folder it names (`study/exports/r1/<time>/`)
+   to the coordinator through the agreed channel — also once in a while as a backup.
+
+The data zip contains the images: you may only open it with your own credentials and data use
+agreement for the source data; do not put it on cloud storage.
+
+**Coordinator:** build the zip with
+`python -m goldkp.project pack --data $DATA --images $IMAGE_ROOT --out gold_study_data.zip --with-images --without-readers`
+(it holds only the study: vocabulary, references, the pre-fill the cards use, the card list, the
+images and their checksums), give both readers the same zip and their ids, and merge the returned
+exports with `import-reader` (section [4](#4-import-readers-work)).
 
 ## 6 Move a study
 ```bash
 python -m goldkp.project pack --data $DATA --images $IMAGE_ROOT --out study.zip                 # images left out
 python -m goldkp.project pack --data $DATA --images $IMAGE_ROOT --out study.zip --with-images   # images inside
+python -m goldkp.project pack --data $DATA --images $IMAGE_ROOT --out data.zip --with-images --without-readers  # for new readers
 ```
 The bundle holds the whole study folder including reader logs (exports are left out) and a
 checksum of every image; unpack it with [1a](#a-unpack-a-study-someone-sent-you). Bundles with
