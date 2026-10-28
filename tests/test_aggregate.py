@@ -73,6 +73,11 @@ def test_adjudication_merge(tmp_path, client_factory):
                                      "--categories", str(data / "categories.json"), *a],
                                     capture_output=True, text=True, cwd=ROOT)
     assert run().returncode == 0
+    # the bare category list in static/ works as well
+    json.dump(json.load(open(data / "categories.json"))["categories"], open(data / "static/categories.json", "w"))
+    alt = subprocess.run([sys.executable, str(ROOT / "aggregate.py"), "--data", str(data),
+                          "--categories", str(data / "static/categories.json")], capture_output=True, text=True, cwd=ROOT)
+    assert alt.returncode == 0, alt.stderr
     adj = client_factory(data, imgs, mode="adjudicate")
     s = adj.get("/api/adj/session").json()
     assert s["total"] >= 1

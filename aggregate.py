@@ -179,7 +179,8 @@ def merge_adjudication(df: pd.DataFrame, data: Path, amap: dict) -> pd.DataFrame
 
 
 def write_gold(df: pd.DataFrame, cj: dict, categories: Path, out: Path) -> None:
-    cats = json.load(open(categories))["categories"]
+    cats = json.load(open(categories))
+    cats = cats["categories"] if isinstance(cats, dict) else cats      # a COCO file or a bare list
     cat_by_name = {c["name"]: c for c in cats}
     images, anns, by_dicom = [], [], defaultdict(lambda: defaultdict(dict))
     for i, im in enumerate(cj["images"]):
