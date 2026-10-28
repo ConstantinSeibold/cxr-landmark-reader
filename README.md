@@ -13,6 +13,7 @@ radiographs, card by card. The result is a gold standard, per-landmark inter-rea
 > keep them on machines covered by the data use agreement — never on GitHub or cloud storage.
 
 **Contents:** [Install](#install) · [1 Get a study](#1-get-a-study) · [2 Read](#2-read) ·
+[Reader packages](#reader-packages-annotate-on-the-readers-own-machine) ·
 [3 Export](#3-export-at-any-time) · [4 Import readers' work](#4-import-readers-work) ·
 [5 Aggregate and adjudicate](#5-aggregate-adjudicate-finalise) · [6 Move a study](#6-move-a-study) ·
 [Testing](#testing) · [Files](#files-and-formats)
@@ -104,8 +105,9 @@ Use a separate reader id (e.g. `--readers pilot`) for a pilot so it never mixes 
   are the predicted masks the pre-fill rules ran on.
 - **Reference:** a ground-truth example of the group (PAXRay++), same colours; vertebra and rib
   groups also show *all levels* (`2`).
-- **Definition panel:** for the selected point — the definition, the v1 rule and the reviewers'
-  note. Hovering a point in the list shows the same text.
+- **Definition panel:** for the selected point — a plain-language definition
+  (`build/reader_definitions.csv`, matched by view, structure and landmark), the technical
+  construction rule and the reviewers' note. Hovering a point in the list shows the same text.
 - **Status per point:** `ok` (pre-fill accepted) · `moved` · `placed` (was missing) ·
   `not visible` · optional `unsure`. A card can only be submitted when every point is resolved.
 - **Scratch cards** (images flagged `no_prefill`, the anchoring check): no points are shown; a
@@ -184,6 +186,17 @@ python aggregate.py --data $DATA --readers r1,r2 --categories $DATA/static/categ
   scratch images; pre-fill error by source), `adjudication_queue.json`, `adjudication_map.json`.
 
 ![adjudication](docs/screenshots/08_adjudication.png)
+
+## Reader packages (annotate on the reader's own machine)
+```bash
+python build/make_reader_package.py --data $DATA --images $IMAGE_ROOT --readers r1,r2 --out-dir release/
+```
+One zip per reader with the app, the study *including its images*, `start.sh` / `start.bat` with the
+reader id fixed, and a short README. The reader unzips it, runs the start script (the first start
+installs the app with `uv` or the standard `venv`; Python 3.10–3.14), reads in the browser and sends
+back an *Export* folder, which you merge with `import-reader` (section 4). Reader logs, exports and
+unused pre-fill versions of the source study are left out. The zips contain the images: credentialed
+recipients and agreed channels only.
 
 ## 6 Move a study
 ```bash

@@ -75,6 +75,44 @@ V1_METHODS = {
 }
 
 
+READER_DEFS = Path(__file__).resolve().parent / "reader_definitions.csv"
+ZONES = {"apical zone lung": "apical zone", "upper zone lung": "upper zone", "mid zone lung": "mid zone",
+         "lung base": "lower zone (lung base)"}
+
+
+def load_reader_defs(path: Path = READER_DEFS) -> list[dict]:
+    with open(path) as f:
+        return list(csv.DictReader(f))
+
+
+def reader_definition(rows: list[dict], view: str, cls: str, kp: str, method: str) -> str:
+    """Plain-language definition for readers (first matching row), placeholders filled in."""
+    for r in rows:
+        if r["view"] not in (view, "both"):
+            continue
+        if not (re.fullmatch(r["class"], cls.strip()) and re.fullmatch(r["landmark"], kp)):
+            continue
+        side = next(iter(re.findall(r"(?<![a-z])(left|right)(?![a-z])", f"{kp} {cls}")), "")
+        parts = re.findall(r"(antero|postero|anterior|posterior|superior|inferior)", kp)
+        word = {"antero": "anterior", "postero": "posterior"}
+        zone = next((z for k, z in ZONES.items() if k in cls), "")
+        zone = (f"{side} {zone}" if zone and side else
+                f"{zone} of both lungs (they overlap on the lateral view)" if zone and view == "lateral" else zone)
+        name = cls.strip()
+        m = re.fullmatch(r"(.+) (left|right)", name)
+        name = f"{m.group(2)} {m.group(1)}" if m else name               # "kidney left" -> "left kidney"
+        pct = re.search(r"(\d+)% of centerline", method)
+        text = r["definition"]
+        fill = {"side": side, "Side": side.capitalize(), "zone": zone, "cls": name,
+                "pct": f"{pct.group(1)} %" if pct else "",
+                "part": word.get(parts[0], parts[0]) if parts else "", "Part": (parts[0].capitalize() if parts else ""),
+                "part2": word.get(parts[1], parts[1]) if len(parts) > 1 else ""}
+        for k, v in fill.items():
+            text = text.replace("{" + k + "}", v)
+        return text
+    return ""
+
+
 def readable_method(kpdef, method_text) -> str:
     if kpdef is None:
         return ""
@@ -127,6 +165,7 @@ def main() -> None:
     vocab = final["vocab"]
 
     rule_rows = rule_index(tax / "kp_rule_changes_v1.csv")
+    reader_rows = load_reader_defs()
     comments = {}
     with open(tax / "kp_final_v1.csv") as f:
         for r in csv.DictReader(f):
@@ -147,6 +186,7 @@ def main() -> None:
         method = readable_method(kpdef, method_text)
         defs[f"{view}|{cls}|{kp}"] = {
             "label": f"{cls} – {pretty(kp)}",
+            "reader": reader_definition(reader_rows, view, cls, kp, method),
             "rule": rule_for(p["source"], kp, rule_rows),
             "comment": comments.get(p["source"].partition("+")[0], ""),
             "method": method,
@@ -176,6 +216,8 @@ def main() -> None:
         print(f"{view}: {n} landmarks in {len(sizes)} groups {sizes}")
     missing = [k for k, d in defs.items() if not d["rule"] and not d["method"]]
     print(f"landmarks without rule or method text: {len(missing)}")
+    no_reader = [k for k, d in defs.items() if not d["reader"]]
+    print(f"landmarks without a reader definition: {len(no_reader)} {no_reader[:10]}")
     print(f"with an explicit v1 rule: {sum(bool(d['rule']) for d in defs.values())}/{len(defs)}; edges "
           f"frontal {len(edges['frontal'])}, lateral {len(edges['lateral'])}")
 

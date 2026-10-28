@@ -104,7 +104,7 @@ def test_card_index_for_jumping(study, client_factory):
     assert set(d["cards"][0]) == {"pos", "gid", "view", "batch", "mode", "done"}     # no image identifiers
     assert d["group_names"]["frontal"]["G19"] == "Vertebrae"
     card = c.get("/api/r/r1/card/0").json()
-    assert all("rule" in p and "method" in p and "note" in p for p in card["points"])
+    assert all("reader" in p and "rule" in p and "method" in p and "note" in p for p in card["points"])
 
 
 def test_partial_export(study, client_factory):

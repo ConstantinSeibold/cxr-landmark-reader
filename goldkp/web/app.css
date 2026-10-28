@@ -65,3 +65,4 @@ header { display: flex; gap: 14px; align-items: center; padding-bottom: 8px; bor
 #defLabel { font-weight: 700; }
 #defBox .k { color: var(--muted); margin-right: 4px; }
 #defNote { color: #ffd166; }
+#defRule { font-size: 11px; color: var(--muted); }

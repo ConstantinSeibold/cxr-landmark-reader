@@ -252,8 +252,8 @@ function renderDef() {
   if (!p) return;
   $("#defLabel").textContent = p.label;
   const line = (el, k, v) => { el.innerHTML = ""; if (!v) return; const s = document.createElement("span"); s.className = "k"; s.textContent = k; el.append(s, v); };
-  line($("#defMethod"), "Definition:", p.method);
-  line($("#defRule"), "Rule (v1):", p.rule && p.rule !== p.method ? p.rule : "");
+  line($("#defMethod"), "Definition:", p.reader || p.method);
+  line($("#defRule"), "Construction rule (technical):", p.rule && p.rule !== p.method ? p.rule : "");
   line($("#defNote"), "Reviewer note:", p.note);
 }
 
@@ -263,7 +263,7 @@ function renderList() {
   S.pts.forEach((p, i) => {
     const li = document.createElement("li");
     if (i === S.sel) li.classList.add("sel");
-    li.title = [p.rule && "Rule: " + p.rule, p.method && "Method: " + p.method].filter(Boolean).join("\n");
+    li.title = [p.reader || p.method, p.rule && "Construction rule: " + p.rule].filter(Boolean).join("\n");
     const dot = document.createElement("span"); dot.className = "dot"; dot.style.background = p.colour;
     const lab = document.createElement("span"); lab.className = "lab"; lab.textContent = p.label;
     li.append(dot, lab);

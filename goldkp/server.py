@@ -166,7 +166,8 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
             pre = [p[0], p[1]] if p and p[2] > 0 else None
             d = defs.get(f"{view}|{key}", {})
             entry = {"key": key, "label": label, "colour": refs["colours"].get(f"{view}|{key}", "#ffffff"),
-                     "rule": d.get("rule", ""), "method": d.get("method", ""), "note": d.get("comment", ""),
+                     "reader": d.get("reader", ""), "rule": d.get("rule", ""), "method": d.get("method", ""),
+                     "note": d.get("comment", ""),
                      "prefill": pre,
                      "xy": pre, "status": "ok" if pre else "missing", "unsure": False}
             if mine:
@@ -281,7 +282,7 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
             d = defs.get(f"{view}|{k['key']}", {})
             keys.append({**k, "label": c["labels"][c["keys"].index(k["key"])],
                          "colour": refs["colours"].get(f"{view}|{k['key']}", "#ffffff"),
-                         "rule": d.get("rule", ""), "method": d.get("method", "")})
+                         "reader": d.get("reader", ""), "rule": d.get("rule", ""), "method": d.get("method", "")})
         ref = refs["files"].get(c["gid"], {}).get(view, {})
         g = vocab["groups"][view][c["gid"]]
         return {"pos": i, "total": len(q), "item_id": it["item_id"], "img": c["img"], "view": view,
