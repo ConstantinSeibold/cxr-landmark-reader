@@ -84,9 +84,12 @@ def test_read_edit_submit_resume(browser, study):
         assert page.locator("#btnMasks").inner_text() == "Outlines: on"
         assert page.locator("#maskLegend .chip").count() == page.evaluate("S.outlines.length") > 0
         page.screenshot(path=ART / "02_masks.png")
-        full = page.evaluate("S.full")
-        page.keyboard.press("c")
-        assert page.evaluate("S.full") != full
+        # crop toggle: disabled on whole-image cards, switches the view on cards with a zoomed crop
+        if page.evaluate("S.card.full"):
+            assert page.locator("#btnCrop").is_disabled()
+            page.keyboard.press("c")
+            assert page.evaluate("S.full")
+        total = get(f"{url}/api/r/r1/session")["total"]
 
         # submit -> next card; the record is stored
         page.keyboard.press("Enter")
@@ -212,6 +215,23 @@ def test_jump_and_definitions(browser, study):
         page.select_option("#jumpGroup", label=next(o for o in page.locator("#jumpGroup option").all_inner_texts()
                                                      if o.startswith("first card without")))
         page.wait_for_function("S.card && S.card.mode === 'scratch'")
+        assert not errors, errors
+
+
+def test_crop_toggle(browser, study):
+    with server(study) as url:
+        total = get(f"{url}/api/r/r1/session")["total"]
+        zoomed = next(i for i in range(total) if not get(f"{url}/api/r/r1/card/{i}")["full"])
+        page, errors = open_reader(browser, url)
+        page.evaluate(f"load({zoomed})")
+        wait_card(page, zoomed)
+        btn = page.locator("#btnCrop")
+        assert btn.is_enabled() and btn.inner_text().startswith("View: zoomed")
+        w0 = page.evaluate("S.view.x1 - S.view.x0")
+        page.keyboard.press("c")
+        assert btn.inner_text().startswith("View: whole image") and page.evaluate("S.view.x1 - S.view.x0") == 512 > w0
+        btn.click()
+        assert btn.inner_text().startswith("View: zoomed") and page.evaluate("S.view.x1 - S.view.x0") == w0
         assert not errors, errors
 
 

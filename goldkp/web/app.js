@@ -109,7 +109,11 @@ function layout() {
   const cv = $("#view");
   cv.width = Math.round(w); cv.height = Math.round(h);
   S.view = { x0, y0, x1, y1, sx: cv.width / (x1 - x0), sy: cv.height / (y1 - y0) };
-  $("#btnCrop").textContent = S.full ? "Crop" : "Full image";
+  // the button shows the current view; cards without a zoomed view (the whole image is the crop) disable it
+  const b = $("#btnCrop");
+  b.disabled = c.full;
+  b.textContent = c.full ? "View: whole image" : S.full ? "View: whole image (c)" : "View: zoomed (c)";
+  b.title = c.full ? "This card is always shown as the whole image" : "Switch between the zoomed crop and the whole image (c)";
   const th = $("#thumb");
   th.width = 130; th.height = Math.round(130 * ar);
 }
@@ -438,7 +442,7 @@ async function toggleMasks() {
   draw();
 }
 
-function toggleFull() { S.full = !S.full; layout(); draw(); }
+function toggleFull() { if (S.card.full) return; S.full = !S.full; layout(); draw(); }
 
 async function submit() {
   if (!complete()) { $("#msg").textContent = "Resolve every landmark first (place it or mark it not visible)."; return; }
