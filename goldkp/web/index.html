@@ -27,12 +27,13 @@
       <canvas id="view" width="720" height="720"></canvas>
       <div id="toolbar">
         <button id="btnCrop" title="Crop / full image (c)">Full image</button>
-        <button id="btnMasks" title="Segmentation masks (m)">Masks: off</button>
+        <button id="btnMasks" title="Structure outlines (m): solid = own structure, dashed = structure the rule reads">Outlines: off</button>
         <button id="btnHide" title="Hold h to hide the points">Hide points</button>
         <label>Brightness <input id="bright" type="range" min="50" max="200" value="100"></label>
         <label>Contrast <input id="contrast" type="range" min="50" max="250" value="100"></label>
         <button id="btnResetView">Reset view</button>
       </div>
+      <div id="maskLegend" hidden></div>
     </section>
     <section id="right">
       <div id="groupInfo">
@@ -48,6 +49,7 @@
       <textarea id="comment" rows="2" placeholder="comment (optional)"></textarea>
       <div id="nav">
         <button id="btnPrev" title="Previous card (Backspace)">◀ Back</button>
+        <button id="btnUndo" title="Undo the last change on this card (Ctrl+Z)">↶ Undo</button>
         <button id="btnSubmit" class="primary" title="Submit and next (Enter)">Submit ▶</button>
       </div>
       <div id="msg"></div>
@@ -77,7 +79,8 @@
       <tr><td>u</td><td>toggle unsure</td></tr>
       <tr><td>r</td><td>reset selected point to the pre-fill</td></tr>
       <tr><td>h (hold)</td><td>hide the points</td></tr>
-      <tr><td>m</td><td>toggle segmentation masks</td></tr>
+      <tr><td>Ctrl+Z</td><td>undo the last change on this card</td></tr>
+      <tr><td>m</td><td>structure outlines (solid: own structure, dashed: structure the rule reads)</td></tr>
       <tr><td>c</td><td>crop / full image</td></tr>
       <tr><td>1 / 2</td><td>reference: example / all levels</td></tr>
       <tr><td>Enter</td><td>submit and next card</td></tr>

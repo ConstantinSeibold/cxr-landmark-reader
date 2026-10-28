@@ -43,6 +43,7 @@ def main() -> None:
     for a in d["annotations"]:
         by.setdefault(a["image_id"], []).append(a)
     vocab = json.load(open(args.static / "vocab.json"))
+    defs = json.load(open(args.static / "definitions.json"))
     pick = ([i for i in d["images"] if "frontal" in i["file_name"]][5: 5 + args.frontal]
             + [i for i in d["images"] if "lateral" in i["file_name"]][5: 5 + args.lateral])
 
@@ -61,10 +62,11 @@ def main() -> None:
         shutil.copy(args.image_root / im["file_name"], args.out / "images" / dst)
         keys = {k for g in vocab["groups"][view].values() for k in g["keys"]}
         classes = {k.split("|", 1)[0] for k in keys}
+        partners = {v for k in keys for v in defs.get(f"{view}|{k}", {}).get("via", [])}
         points, masks = {}, {}
         for a in by.get(im["id"], []):
             c = cats[a["category_id"]]
-            if c["name"] not in classes:
+            if c["name"] not in classes | partners:
                 continue
             k = np.array(a["keypoints"]).reshape(-1, 3)
             pts = {}
@@ -76,7 +78,8 @@ def main() -> None:
                     pts[name] = [float(x2), float(y2), 2, "demo_gt_noise"]
                 else:
                     pts[name] = [0.0, 0.0, 0, "none"]
-            points[c["name"]] = pts
+            if c["name"] in classes:
+                points[c["name"]] = pts
             s = a["segmentation"]
             r = M.merge(M.frPyObjects(s, 512, 512)) if isinstance(s, list) else (
                 M.frPyObjects(s, 512, 512) if isinstance(s.get("counts"), list) else s)

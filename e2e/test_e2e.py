@@ -80,8 +80,9 @@ def test_read_edit_submit_resume(browser, study):
 
         # masks and crop toggles
         page.keyboard.press("m")
-        page.wait_for_function("S.maskImg !== null")
-        assert page.locator("#btnMasks").inner_text() == "Masks: on"
+        page.wait_for_function("S.outlines !== null")
+        assert page.locator("#btnMasks").inner_text() == "Outlines: on"
+        assert page.locator("#maskLegend .chip").count() == page.evaluate("S.outlines.length") > 0
         page.screenshot(path=ART / "02_masks.png")
         full = page.evaluate("S.full")
         page.keyboard.press("c")
@@ -124,6 +125,34 @@ def test_drag_accuracy_and_grab_offset(browser, study):
         after = page.evaluate(f"S.pts[{i}].xy")
         assert abs(after[0] - (before[0] + 30 / sx)) < 0.05 and abs(after[1] - (before[1] - 20 / sy)) < 0.05
         assert statuses(page)[i] == "moved"
+        assert not errors, errors
+
+
+def test_undo(browser, study):
+    with server(study) as url:
+        page, errors = open_reader(browser, url)
+        i = page.evaluate("S.pts.findIndex(p => p.xy)")
+        before = page.evaluate(f"S.pts[{i}].xy.slice()")
+        x, y = canvas_point(page, i)
+        page.mouse.move(x, y)
+        page.mouse.down()
+        page.mouse.move(x + 30, y + 30, steps=6)
+        page.mouse.up()
+        page.evaluate(f"S.sel = {i}; renderList();")
+        page.keyboard.press("n")
+        page.keyboard.press("u")
+        assert statuses(page)[i] == "not_visible" and page.evaluate(f"S.pts[{i}].unsure")
+        page.keyboard.press("Control+z")                     # undo unsure
+        assert not page.evaluate(f"S.pts[{i}].unsure")
+        page.locator("#btnUndo").click()                     # undo not visible
+        assert statuses(page)[i] == "moved"
+        page.keyboard.press("Control+z")                     # undo the drag
+        assert statuses(page)[i] == "ok" and page.evaluate(f"S.pts[{i}].xy") == before
+        page.keyboard.press("Control+z")                     # nothing left: no change, no error
+        assert statuses(page)[i] == "ok"
+        # a click on a point without moving it adds nothing to undo
+        page.mouse.click(x, y)
+        assert page.evaluate("S.hist.length") == 0
         assert not errors, errors
 
 

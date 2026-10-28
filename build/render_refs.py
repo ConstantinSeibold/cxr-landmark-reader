@@ -21,15 +21,22 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
+import matplotlib.patheffects as pe  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from PIL import Image  # noqa: E402
 from pycocotools import mask as M  # noqa: E402
 
+import sys  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from goldkp.cards import rule_partners  # noqa: E402
+
 PALETTE = ["#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231", "#911eb4", "#42d4f4", "#f032e6",
            "#bfef45", "#fabed4", "#469990", "#dcbeff", "#9a6324", "#fffac8", "#800000", "#aaffc3",
            "#808000", "#ffd8b1", "#000075", "#a9a9a9"]
 SERIES_GROUPS = {"G19", "G20"}
+OWNER_COL, PARTNER_COL = "#00e5ff", "#ffb000"     # structure outlines / structures the rules read
+HALO = [pe.Stroke(linewidth=3.2, foreground="black"), pe.Normal()]
 REP = {"G19": ("vertebrae T7",), "G20": ("7th rib",)}
 FORBIDDEN = "kp_prep/paper"
 
@@ -70,9 +77,10 @@ def ann_mask(a, h, w):
     return M.decode(r).astype(bool)
 
 
-def render(view_data, keys, colours, edges, out: Path, series: bool, title: str) -> bool:
+def render(view_data, keys, colours, edges, out: Path, series: bool, title: str, via: dict | None = None) -> bool:
     gray, anns, cats, h, w = view_data
     pts, masks = [], {}
+    partners = {}
     for key in keys:
         cls, kp = key.split("|", 1)
         a = anns.get(cls)
@@ -86,6 +94,9 @@ def render(view_data, keys, colours, edges, out: Path, series: bool, title: str)
         if v > 0:
             pts.append((x, y, key))
             masks.setdefault(cls, ann_mask(a, h, w))
+            for p in (via or {}).get(key, []):
+                if p in anns and p not in masks and p not in partners:
+                    partners[p] = ann_mask(anns[p], h, w)
     if not pts:
         return False
     xs = [p[0] for p in pts]
@@ -113,8 +124,12 @@ def render(view_data, keys, colours, edges, out: Path, series: bool, title: str)
     fig = plt.figure(figsize=(6.4, fig_h), dpi=110)
     ax = fig.add_axes([0, leg_h / fig_h, 1, 6.4 / fig_h])          # legend below, title above
     ax.imshow(gray, cmap="gray", vmin=0, vmax=255, interpolation="lanczos")
+    for m in partners.values():
+        cs = ax.contour(m, levels=[0.5], colors=[PARTNER_COL], linewidths=1.3, linestyles="dashed")
+        plt.setp(cs.collections if hasattr(cs, "collections") else [cs], path_effects=HALO)
     for m in masks.values():
-        ax.contour(m, levels=[0.5], colors=["#9ad1d4"], linewidths=0.5, alpha=0.8)
+        cs = ax.contour(m, levels=[0.5], colors=[OWNER_COL], linewidths=1.3)
+        plt.setp(cs.collections if hasattr(cs, "collections") else [cs], path_effects=HALO)
     at = {p[2]: (p[0], p[1]) for p in pts}
     for a, b in edges:
         if a in at and b in at:
@@ -136,6 +151,9 @@ def render(view_data, keys, colours, edges, out: Path, series: bool, title: str)
     ax.set_title(title, fontsize=10)
     handles = [plt.Line2D([], [], marker="o", ls="", color=c, markeredgecolor="white", label=n.replace("_", " "))
                for n, c in legend]
+    handles.append(plt.Line2D([], [], color=OWNER_COL, lw=1.5, label="structure outline"))
+    if partners:
+        handles.append(plt.Line2D([], [], color=PARTNER_COL, lw=1.5, ls="--", label="structure the rule reads"))
     fig.legend(handles=handles, loc="lower center", ncol=2, fontsize=8, frameon=False)
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=110)
@@ -155,6 +173,7 @@ def main() -> None:
     if FORBIDDEN in str(args.out.resolve()):
         raise SystemExit(f"refusing to write into {FORBIDDEN} (synced to Overleaf)")
     vocab = json.load(open(args.vocab))
+    defs = json.load(open(args.vocab.parent / "definitions.json"))
     data = {"frontal": load(args.kp_json, args.image_root, args.frontal),
             "lateral": load(args.kp_json, args.image_root, args.lateral)}
     manifest = {"colours": {}, "files": {}}
@@ -163,18 +182,20 @@ def main() -> None:
         for gid, g in groups.items():
             keys = g["keys"]
             colours = colours_for(keys)
+            allowed = set(rule_partners(keys, defs, view))
+            via = {k: [v for v in defs.get(f"{view}|{k}", {}).get("via", []) if v in allowed] for k in keys}
             manifest["colours"].update({f"{view}|{k}": c for k, c in colours.items()})
             entry = {}
             if gid in SERIES_GROUPS:
                 rep = [k for k in keys if any(r in k.split("|")[0] and not k.split("|")[0][len(r):len(r) + 1].isdigit()
                                               for r in REP[gid])]
                 if render(data[view], rep, colours, edges, args.out / f"{gid}_{view}.png", False,
-                          f"{gid} {g['name']} – one instance"):
+                          f"{gid} {g['name']} – one instance", via):
                     entry["main"] = f"{gid}_{view}.png"
                 if render(data[view], keys, colours, edges, args.out / f"{gid}_{view}_series.png", True,
-                          f"{gid} {g['name']} – all levels"):
+                          f"{gid} {g['name']} – all levels", via):
                     entry["series"] = f"{gid}_{view}_series.png"
-            elif render(data[view], keys, colours, edges, args.out / f"{gid}_{view}.png", False, f"{gid} {g['name']}"):
+            elif render(data[view], keys, colours, edges, args.out / f"{gid}_{view}.png", False, f"{gid} {g['name']}", via):
                 entry["main"] = f"{gid}_{view}.png"
             manifest["files"].setdefault(gid, {})[view] = entry
             if not entry:

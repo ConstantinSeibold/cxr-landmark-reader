@@ -123,3 +123,21 @@ def reader_order(cards: list[dict], rid: str) -> list[int]:
 def load_cards(path: Path) -> tuple[list[dict], str]:
     d = json.load(open(path))
     return d["cards"], d["sha"]
+
+
+MAX_PARTNERS = 6
+
+
+def rule_partners(keys: list[str], defs: dict, view: str) -> list[str]:
+    """Structures the rules of these landmarks read besides their own (e.g. the visible lung for
+    the costophrenic vertex). Rules that scan a whole series (the rib that crosses the thoracic
+    margin) would list every rib; above MAX_PARTNERS the ribs are left out."""
+    owners = {k.split("|", 1)[0] for k in keys}
+    out = []
+    for k in keys:
+        for v in defs.get(f"{view}|{k}", {}).get("via", []):
+            if v not in owners and v not in out:
+                out.append(v)
+    if len(out) > MAX_PARTNERS:
+        out = [v for v in out if "rib" not in v]
+    return out[:MAX_PARTNERS]

@@ -149,6 +149,8 @@ def main() -> None:
             "comment": comments.get(p["source"].partition("+")[0], ""),
             "method": method,
             "source": p["source"],
+            # partner structures the rule reads (e.g. the visible lung for the costophrenic vertex)
+            "via": [v for v in (kpdef.via if kpdef else ()) if v != cls],
         }
     for view in groups:
         groups[view] = OrderedDict(sorted(groups[view].items()))

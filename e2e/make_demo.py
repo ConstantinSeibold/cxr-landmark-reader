@@ -107,7 +107,7 @@ def main() -> None:
         page.mouse.up()
         rec.shot(1200, "02_moved")
         page.keyboard.press("m")
-        page.wait_for_function("S.maskImg !== null")
+        page.wait_for_function("S.outlines !== null")
         rec.shot(1600, "03_masks")
         page.keyboard.press("m")
         page.keyboard.press("Enter")

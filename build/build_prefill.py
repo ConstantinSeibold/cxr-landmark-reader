@@ -159,9 +159,12 @@ def main() -> None:
             points[cls][kp] = pt if pt else [0.0, 0.0, 0, "none"]
             cover[(view, key)]["n"] += 1
             cover[(view, key)][pt[3] if pt else "none"] += 1
+        # owner structures of the landmarks plus the partner structures their rules read
+        defs = json.load(open(args.vocab.parent / "definitions.json"))
+        wanted = {k.split("|", 1)[0] for k in keys} | {v for k in keys for v in defs.get(f"{view}|{k}", {}).get("via", [])}
         out_masks = {}
         for cls, m in masks.items():
-            if not any(k.split("|", 1)[0] == cls for k in keys):
+            if cls not in wanted:
                 continue
             rle = M.encode(np.asfortranarray(m.astype(np.uint8)))
             rle["counts"] = rle["counts"].decode()

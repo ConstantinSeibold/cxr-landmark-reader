@@ -73,7 +73,10 @@ def test_resources_and_headers(study, client_factory):
     assert c.get("/api/img/0").headers["content-type"] == "image/jpeg"
     assert c.get("/api/img/99").status_code == 404
     assert c.get("/api/img/..%2Fx").status_code in (404, 422)
-    assert c.get("/api/r/r1/card/0/masks.png").headers["content-type"] == "image/png"
+    outl = c.get("/api/r/r1/card/0/outlines").json()
+    roles = {o["name"]: o["role"] for o in outl}
+    assert roles == {"heart": "structure", "vertebrae T3": "rule"}
+    assert all(o["polys"] and len(o["polys"][0]) >= 4 for o in outl)
     assert c.get("/api/ref/G01_frontal.png").status_code == 200
     assert c.get("/api/ref/..%2Fcards.json").status_code == 404
     assert c.get("/static/server.py").status_code == 404

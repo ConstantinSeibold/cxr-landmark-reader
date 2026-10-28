@@ -9,7 +9,7 @@ const post = (u, b) => fetch(u, { method: "POST", headers: { "Content-Type": "ap
 
 const S = {
   mode: "read", rid: null, pos: 0, total: 0, card: null, pts: [], sel: 0,
-  img: null, maskImg: null, showMasks: false, hide: false, full: false,
+  img: null, outlines: null, showMasks: false, hide: false, full: false, hist: [],
   drag: null, activeMs: 0, lastInput: Date.now(), nEvents: 0, refKind: "main",
   view: { x0: 0, y0: 0, x1: 512, y1: 512, sx: 1, sy: 1 },
 };
@@ -52,8 +52,10 @@ async function load(pos) {
   S.pts = S.mode === "adjudicate" ? adjPoints(c) : c.points.map((p) => ({ ...p, n_edits: 0 }));
   S.sel = Math.max(0, S.pts.findIndex((p) => p.status === "missing"));
   S.img = await loadImage(`/api/img/${c.img}`);
-  S.maskImg = null;
-  if (S.showMasks && S.mode !== "adjudicate") S.maskImg = await loadImage(`/api/r/${S.rid}/card/${pos}/masks.png`);
+  S.hist = [];
+  S.outlines = null;
+  if (S.showMasks && S.mode !== "adjudicate") S.outlines = await api(`/api/r/${S.rid}/card/${pos}/outlines`);
+  renderLegend();
   $("#flag").checked = !!c.flag;
   $("#comment").value = c.comment || "";
   $("#groupTitle").textContent = `${c.gid} · ${c.group.name}${c.batch ? " · " + c.batch : ""}`;
@@ -122,12 +124,43 @@ function draw() {
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(S.img, v.x0, v.y0, v.x1 - v.x0, v.y1 - v.y0, 0, 0, cv.width, cv.height);
   ctx.filter = "none";
-  if (S.showMasks && S.maskImg) ctx.drawImage(S.maskImg, v.x0, v.y0, v.x1 - v.x0, v.y1 - v.y0, 0, 0, cv.width, cv.height);
+  if (S.showMasks && S.outlines) drawOutlines(ctx);
   if (!S.hide) {
     if (S.mode === "adjudicate") drawAdj(ctx); else drawPoints(ctx);
   }
   drawThumb();
   banner();
+}
+
+// structure outlines: solid = the landmark's own structure, dashed = a structure its rule reads
+function drawOutlines(ctx) {
+  for (const o of S.outlines) {
+    ctx.setLineDash(o.role === "rule" ? [7, 5] : []);
+    for (const [w, col] of [[3.6, "rgba(0,0,0,.85)"], [1.7, o.colour]]) {
+      ctx.lineWidth = w; ctx.strokeStyle = col;
+      for (const poly of o.polys) {
+        ctx.beginPath();
+        poly.forEach((q, j) => { const [x, y] = toCanvas(q[0], q[1]); if (j) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+        ctx.closePath(); ctx.stroke();
+      }
+    }
+  }
+  ctx.setLineDash([]);
+}
+
+function renderLegend() {
+  const el = $("#maskLegend");
+  el.innerHTML = "";
+  el.hidden = !(S.showMasks && S.outlines && S.outlines.length);
+  if (el.hidden) return;
+  for (const o of S.outlines) {
+    const s = document.createElement("span");
+    s.className = `chip ${o.role}`;
+    s.style.borderColor = o.colour;
+    s.textContent = o.name.trim();
+    s.title = o.role === "rule" ? "structure the landmark rule reads" : "the landmark's own structure";
+    el.appendChild(s);
+  }
 }
 
 function drawPoints(ctx) {
@@ -193,7 +226,7 @@ function renderList() {
         const b = document.createElement("button");
         b.textContent = opt === "not_visible" ? "not vis." : opt;
         if (p.choice === opt) b.classList.add("on");
-        b.onclick = (e) => { e.stopPropagation(); p.choice = opt; if (opt !== "new") p.xy = null; S.sel = i; renderList(); draw(); };
+        b.onclick = (e) => { e.stopPropagation(); snapshot(); p.choice = opt; if (opt !== "new") p.xy = null; S.sel = i; renderList(); draw(); };
         ch.appendChild(b);
       }
       const r = document.createElement("span"); r.className = "muted"; r.textContent = p.reason || "";
@@ -234,11 +267,26 @@ function canvasPos(e) {
   return [((e.clientX - r.left) * $("#view").width) / r.width, ((e.clientY - r.top) * $("#view").height) / r.height];
 }
 
+function snapshot() {
+  S.hist.push(JSON.stringify({ pts: S.pts.map((p) => ({ xy: p.xy, status: p.status, unsure: p.unsure, n_edits: p.n_edits, choice: p.choice })),
+                               flag: $("#flag").checked }));
+  if (S.hist.length > 200) S.hist.shift();
+}
+
+function undo() {
+  if (!S.hist.length || S.drag) return;
+  const st = JSON.parse(S.hist.pop());
+  st.pts.forEach((q, i) => Object.assign(S.pts[i], q));
+  $("#flag").checked = st.flag;
+  renderList(); draw();
+}
+
 function onDown(e) {
   touch();
   const [px, py] = canvasPos(e);
   const hit = hitTest(px, py);
   if (hit >= 0) {
+    snapshot();                     // dropped again in onUp if the point did not move
     S.sel = hit;
     const p = S.pts[hit];
     // keep the grab offset so an off-centre grab does not make the point jump to the cursor
@@ -248,11 +296,13 @@ function onDown(e) {
   } else {
     const p = S.pts[S.sel];
     if (p && S.mode !== "adjudicate" && (p.status === "missing" || p.status === "not_visible")) {
+      snapshot();
       p.xy = toImage(px, py).map(clamp512);
       p.status = p.prefill ? "moved" : "added";
       p.n_edits++; S.nEvents++;
       nextUnresolved();
     } else if (p && S.mode === "adjudicate" && p.choice === "new") {
+      snapshot();
       p.xy = toImage(px, py).map(clamp512);
       S.nEvents++;
     }
@@ -273,7 +323,10 @@ function onMove(e) {
 }
 
 function onUp() {
-  if (S.drag) { S.drag = null; renderList(); draw(); }
+  if (S.drag) {
+    if (!S.drag.moved) S.hist.pop();
+    S.drag = null; renderList(); draw();
+  }
 }
 
 const clamp512 = (v) => Math.min(511.99, Math.max(0, v));
@@ -286,13 +339,15 @@ function nextUnresolved() {
 function setNotVisible() {
   const p = S.pts[S.sel];
   if (!p || S.mode === "adjudicate") return;
+  snapshot();
   p.status = "not_visible"; p.n_edits++; S.nEvents++;
   nextUnresolved(); renderList(); draw();
 }
-function toggleUnsure() { const p = S.pts[S.sel]; if (p && S.mode !== "adjudicate") { p.unsure = !p.unsure; renderList(); draw(); } }
+function toggleUnsure() { const p = S.pts[S.sel]; if (p && S.mode !== "adjudicate") { snapshot(); p.unsure = !p.unsure; renderList(); draw(); } }
 function resetPoint() {
   const p = S.pts[S.sel];
   if (!p || S.mode === "adjudicate") return;
+  snapshot();
   p.xy = p.prefill ? p.prefill.slice() : null;
   p.status = p.prefill ? "ok" : "missing";
   renderList(); draw();
@@ -301,8 +356,9 @@ function resetPoint() {
 async function toggleMasks() {
   if (S.mode === "adjudicate") return;
   S.showMasks = !S.showMasks;
-  $("#btnMasks").textContent = `Masks: ${S.showMasks ? "on" : "off"}`;
-  if (S.showMasks && !S.maskImg) S.maskImg = await loadImage(`/api/r/${S.rid}/card/${S.pos}/masks.png`);
+  $("#btnMasks").textContent = `Outlines: ${S.showMasks ? "on" : "off"}`;
+  if (S.showMasks && !S.outlines) S.outlines = await api(`/api/r/${S.rid}/card/${S.pos}/outlines`);
+  renderLegend();
   draw();
 }
 
@@ -379,8 +435,12 @@ function wire() {
   $("#btnResetView").onclick = () => { $("#bright").value = 100; $("#contrast").value = 100; draw(); };
   $("#refMain").onclick = () => setRef("main");
   $("#refSeries").onclick = () => setRef("series");
+  $("#btnUndo").onclick = undo;
   $("#flag").onchange = () => {
-    if ($("#flag").checked) { S.pts.forEach((p) => { p.status = "not_visible"; }); renderList(); draw(); }
+    if ($("#flag").checked) {
+      const was = $("#flag").checked; $("#flag").checked = false; snapshot(); $("#flag").checked = was;
+      S.pts.forEach((p) => { p.status = "not_visible"; }); renderList(); draw();
+    }
   };
   $("#helpBtn").onclick = () => { $("#help").hidden = false; };
   $("#helpClose").onclick = () => { $("#help").hidden = true; };
@@ -395,6 +455,7 @@ function wire() {
       return;
     }
     if (k === "?") { $("#help").hidden = !$("#help").hidden; return; }
+    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "z") { e.preventDefault(); undo(); return; }
     if (k === "Enter") { e.preventDefault(); submit(); }
     else if (k === "Backspace") { e.preventDefault(); if (S.pos > 0) load(S.pos - 1); }
     else if (k === "Tab" || k === "ArrowDown") { e.preventDefault(); S.sel = (S.sel + (e.shiftKey ? S.pts.length - 1 : 1)) % S.pts.length; renderList(); draw(); }

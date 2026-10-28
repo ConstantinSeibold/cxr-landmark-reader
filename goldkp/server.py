@@ -21,14 +21,14 @@ from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from PIL import Image
 
-from .cards import load_cards, reader_order
+from .cards import reader_order, rule_partners
 from .store import ReaderStore, write_json_atomic
 
 WEB = Path(__file__).resolve().parent / "web"
 APP_VERSION = "0.1"
 STATUSES = {"ok", "moved", "added", "not_visible"}
-MASK_COLOURS = [(230, 25, 75), (60, 180, 75), (255, 225, 25), (67, 99, 216), (245, 130, 49),
-                (145, 30, 180), (66, 212, 244), (240, 50, 230), (191, 239, 69), (70, 153, 144)]
+MASK_COLOURS = ["#00e5ff", "#7CFC00", "#ff6ec7", "#ffffff", "#c0a0ff", "#40ffa0"]   # own structures
+PARTNER_COLOURS = ["#ffb000", "#ff7a00", "#ffd84d", "#ff9e7a", "#e0c060", "#ffaa55"]  # structures the rules read
 CSP = ("default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
        "script-src 'self'; connect-src 'self'")
 
@@ -58,6 +58,30 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
     @functools.lru_cache(maxsize=16)
     def prefill(img_idx: int) -> dict:
         return json.load(open(prefill_dir / f"{images[img_idx]['dicom_id']}.json"))
+
+    @functools.lru_cache(maxsize=256)
+    def contours(img_idx: int, cls: str) -> list:
+        """Outline polylines of a predicted mask in the 512 frame (simplified, for crisp drawing)."""
+        import cv2
+        m = prefill(img_idx).get("masks", {}).get(cls)
+        if m is None:
+            return []
+        cs, _ = cv2.findContours(_decode_rle(m["rle"]).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        out = []
+        for c in cs:
+            if len(c) < 6:
+                continue
+            c = cv2.approxPolyDP(c, 0.6, True)[:, 0, :].astype(float) + 0.5
+            out.append([[round(x, 1), round(y, 1)] for x, y in c])
+        return out
+
+    def outline_classes(c: dict) -> list[dict]:
+        masks = prefill(c["img"]).get("masks", {})
+        own = [{"name": n, "role": "structure", "colour": MASK_COLOURS[i % len(MASK_COLOURS)]}
+               for i, n in enumerate(cl for cl in c["classes"] if cl in masks)]
+        partners = [{"name": n, "role": "rule", "colour": PARTNER_COLOURS[i % len(PARTNER_COLOURS)]}
+                    for i, n in enumerate(p for p in rule_partners(c["keys"], defs, c["view"]) if p in masks)]
+        return own + partners
 
     @functools.lru_cache(maxsize=64)
     def jpeg(img_idx: int) -> bytes:
@@ -146,8 +170,7 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
             "orig_wh": pf.get("orig_wh"), "points": pts,
             "edges": [e for e in vocab["edges"][view] if e[0] in keyset and e[1] in keyset],
             "refs": {k: f"/api/ref/{v}" for k, v in ref.items()},
-            "mask_classes": [{"name": cl, "colour": "#%02x%02x%02x" % MASK_COLOURS[i % len(MASK_COLOURS)]}
-                             for i, cl in enumerate(c["classes"]) if cl in pf.get("masks", {})],
+            "outlines": outline_classes(c),
             "flag": mine.get("card_flag") if mine else None, "comment": mine.get("comment", "") if mine else "",
             "done": mine is not None,
         }
@@ -191,22 +214,11 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
             raise HTTPException(404)
         return Response(jpeg(idx), media_type="image/jpeg")
 
-    @app.get("/api/r/{rid}/card/{pos}/masks.png")
-    def masks(rid: str, pos: int):
+    @app.get("/api/r/{rid}/card/{pos}/outlines")
+    def outlines(rid: str, pos: int):
         store_of(rid)
         c = card_at(rid, pos)
-        pf = prefill(c["img"])
-        rgba = np.zeros((512, 512, 4), np.uint8)
-        for i, cl in enumerate(c["classes"]):
-            m = pf.get("masks", {}).get(cl)
-            if m is None:
-                continue
-            mk = _decode_rle(m["rle"])
-            rgba[mk, :3] = MASK_COLOURS[i % len(MASK_COLOURS)]
-            rgba[mk, 3] = 110
-        buf = io.BytesIO()
-        Image.fromarray(rgba, "RGBA").save(buf, format="PNG")
-        return Response(buf.getvalue(), media_type="image/png")
+        return [{**o, "polys": contours(c["img"], o["name"])} for o in outline_classes(c)]
 
     @app.get("/api/ref/{name}")
     def ref(name: str):

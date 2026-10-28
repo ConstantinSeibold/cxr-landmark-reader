@@ -53,3 +53,7 @@ header { display: flex; gap: 14px; align-items: center; padding-bottom: 8px; bor
 #adjLegend { font-size: 12px; color: var(--muted); }
 .mk { display: inline-block; width: 10px; height: 10px; margin: 0 4px 0 10px; border: 2px solid #fff; }
 .mk.a { border-radius: 50%; } .mk.m { transform: rotate(45deg); }
+#maskLegend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; max-width: 720px; }
+#maskLegend .chip { font-size: 12px; padding: 1px 8px; border: 2px solid; border-radius: 10px; background: #000; }
+#maskLegend .chip.rule { border-style: dashed; }
+#nav { gap: 6px; }

@@ -57,8 +57,9 @@ def make_study(tmp: Path, n_frontal: int = 2, n_lateral: int = 1, scratch_last: 
     (data / "refs").mkdir()
     imgs.mkdir()
     json.dump(VOCAB, open(data / "static/vocab.json", "w"))
-    defs = {f"{v}|{k}": {"label": k, "rule": f"rule for {k}", "comment": "", "method": "m", "source": "K0"}
+    defs = {f"{v}|{k}": {"label": k, "rule": f"rule for {k}", "comment": "", "method": "m", "source": "K0", "via": []}
             for v, gs in VOCAB["groups"].items() for g in gs.values() for k in g["keys"]}
+    defs["frontal|heart|left_cardiac_border"]["via"] = ["vertebrae T3"]     # a rule partner with a mask
     json.dump(defs, open(data / "static/definitions.json", "w"))
     Image.new("RGB", (64, 64), "gray").save(data / "refs/G01_frontal.png")
     json.dump({"colours": {f"frontal|{k}": "#ff0000" for k in VOCAB["groups"]["frontal"]["G01"]["keys"]},
