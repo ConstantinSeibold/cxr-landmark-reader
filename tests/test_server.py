@@ -105,3 +105,23 @@ def test_card_index_for_jumping(study, client_factory):
     assert d["group_names"]["frontal"]["G19"] == "Vertebrae"
     card = c.get("/api/r/r1/card/0").json()
     assert all("rule" in p and "method" in p and "note" in p for p in card["points"])
+
+
+def test_partial_export(study, client_factory):
+    data, imgs = study
+    import shutil
+    shutil.copy(data / "categories.json", data / "static" / "categories.json")
+    c = client_factory(data, imgs)
+    card = c.get("/api/r/r1/card/0").json()
+    c.post("/api/r/r1/card/0/submit", json=answer(card, shift=(2, 0), status="moved"))
+    r = c.post("/api/r/r1/export").json()
+    assert r["done"] == 1 and r["cards"] == 7 and r["answered"] == 2 and r["dir"].startswith("exports/r1/")
+    out = data / r["dir"]
+    assert {p.name for p in out.iterdir()} == {"annotations.csv", "annotations_by_image.json",
+                                              "annotations_coco.json", "summary.json"}
+    summ = json.load(open(out / "summary.json"))
+    assert not summ["complete"] and summ["per_group"]["G01|frontal"]["done"] == 1
+    coco = json.load(open(out / "annotations_coco.json"))
+    assert sum(a["num_keypoints"] for a in coco["annotations"]) == 2
+    assert "file_name" not in coco["images"][0]
+    assert c.post("/api/r/r2/export").json()["done"] == 0          # nothing yet, still a valid export

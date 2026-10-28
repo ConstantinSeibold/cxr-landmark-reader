@@ -235,6 +235,18 @@ def test_crop_toggle(browser, study):
         assert not errors, errors
 
 
+def test_export_button(browser, study):
+    with server(study) as url:
+        page, errors = open_reader(browser, url)
+        page.keyboard.press("Enter")
+        wait_card(page, 1)
+        page.locator("#btnExport").click()
+        page.wait_for_function("document.querySelector('#msg').textContent.startsWith('Exported')")
+        assert "1/" in page.locator("#msg").inner_text()
+        assert len(list((study / "exports" / "r1").iterdir())) == 1
+        assert not errors, errors
+
+
 def test_missing_point_and_scratch_placement(browser, study):
     with server(study) as url:
         total = get(f"{url}/api/r/r1/session")["total"]

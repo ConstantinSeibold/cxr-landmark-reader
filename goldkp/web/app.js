@@ -41,7 +41,7 @@ async function enter(rid) {
   const s = await api(S.mode === "adjudicate" ? "/api/adj/session" : `/api/r/${rid}/session`);
   S.total = s.total;
   if (!s.total) { $("#banner").textContent = "Nothing to do."; return; }
-  if (S.mode !== "adjudicate") await buildJumpMenu(); else $("#jumpGroup").hidden = true;
+  if (S.mode !== "adjudicate") await buildJumpMenu(); else { $("#jumpGroup").hidden = true; $("#btnExport").hidden = true; }
   await load(Math.min(s.cursor, s.total - 1));
 }
 
@@ -517,6 +517,14 @@ function wire() {
   $("#refMain").onclick = () => setRef("main");
   $("#refSeries").onclick = () => setRef("series");
   $("#btnUndo").onclick = undo;
+  $("#btnExport").onclick = async () => {
+    try {
+      const r = await post(`/api/r/${S.rid}/export`, {});
+      $("#msg").style.color = "#2a9d8f";
+      $("#msg").textContent = `Exported ${r.done}/${r.cards} cards (${r.answered} landmarks) to DATA/${r.dir}`;
+      setTimeout(() => { $("#msg").textContent = ""; $("#msg").style.color = ""; }, 8000);
+    } catch (err) { $("#msg").textContent = `Export failed: ${err.message}`; }
+  };
   $("#jump").addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); jumpTo(parseInt($("#jump").value, 10) - 1); $("#jump").blur(); }
   });

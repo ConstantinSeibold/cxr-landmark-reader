@@ -113,6 +113,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--kp-prep", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--categories", type=Path, help="COCO json whose categories define the gold slots "
+                                                     "(copied to static/categories.json for exports)")
     args = ap.parse_args()
     tax = args.kp_prep / "taxonomy"
 
@@ -165,6 +167,8 @@ def main() -> None:
     json.dump({"version": final["version"], "groups": groups, "edges": edges},
               open(args.out / "vocab.json", "w"), indent=1)
     json.dump(defs, open(args.out / "definitions.json", "w"), indent=1)
+    if args.categories:
+        json.dump(json.load(open(args.categories))["categories"], open(args.out / "categories.json", "w"))
 
     for view in groups:
         n = sum(len(g["keys"]) for g in groups[view].values())

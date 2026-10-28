@@ -47,7 +47,8 @@ All inputs are passed as paths; nothing is hard-coded. `KP_PREP` is the landmark
 repository (taxonomy + extraction rules), `DATA` the study folder (keep it outside any synced or
 public location).
 ```bash
-python build/build_vocab.py   --kp-prep $KP_PREP --out $DATA/static          # vocabulary, groups, definitions
+python build/build_vocab.py   --kp-prep $KP_PREP --out $DATA/static \
+       --categories $PAXRAY/annotations/test_kp_v1.json                       # vocabulary, groups, definitions
 python build/render_refs.py   --vocab $DATA/static/vocab.json \
        --kp-json $PAXRAY/annotations/val_kp_v1.json --image-root $PAXRAY --out $DATA/refs
 python build/build_prefill.py --kp-prep $KP_PREP --selection selection.csv --preds preds.pkl \
@@ -77,6 +78,13 @@ readers agree within 3√2·σ·s become the mean; visibility conflicts, unsure 
 distances go to adjudication (readers shown as A/B in random order). Outputs: `gold_kp_v1.json`
 (COCO keypoints keyed by image id, no pixels), `sigma_table.csv`, `agreement_report.md`
 (per group, time per card, anchoring check, pre-fill error by source).
+
+**Partial exports.** At any time, finished or not: the *Export* button in the header (the reader's
+own annotations) or `python -m goldkp.export --data $DATA --readers r1,r2` writes
+`annotations.csv`, `annotations_by_image.json`, `annotations_coco.json` (gold categories; unanswered
+landmarks have v = 0) and `summary.json` (progress per group) to `$DATA/exports/<reader>/<time>/` on
+the server. `aggregate.py` also runs on a partial study and uses only the cards both readers have
+finished.
 
 Remote readers: the server only binds to loopback; use an SSH tunnel (`ssh -L 8765:localhost:8765`).
 

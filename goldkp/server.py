@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 from PIL import Image
 
 from .cards import reader_order, rule_partners
+from .export import export_reader
 from .store import ReaderStore, write_json_atomic
 
 WEB = Path(__file__).resolve().parent / "web"
@@ -220,6 +221,14 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
                "active_ms": int(body.get("active_ms", 0)), "n_events": int(body.get("n_events", 0))}
         st.append(rec)
         return {"ok": True, "next": min(pos + 1, len(cards) - 1), "done": st.done}
+
+    @app.post("/api/r/{rid}/export")
+    def export(rid: str):
+        """Snapshot of this reader's annotations so far, written on the server (never downloaded)."""
+        store_of(rid)
+        r = export_reader(data, rid)
+        r["dir"] = str(Path(r["dir"]).relative_to(data))
+        return r
 
     @app.get("/api/img/{idx}")
     def img(idx: int):

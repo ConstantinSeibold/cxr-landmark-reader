@@ -269,6 +269,8 @@ def main() -> None:
     df, cj = pairs_table(args.data, readers)
     if df.empty:
         raise SystemExit("no card has been read by both readers yet")
+    print(f"cards read by both readers: {df.card_id.nunique()}/{len(cj['cards'])} "
+          f"({'complete' if df.card_id.nunique() == len(cj['cards']) else 'partial: unfinished cards are left out'})")
     sig = sigma_table(df, args.factor)
     sig.to_csv(out / "sigma_table.csv", index=False)
     df = decide(df, sig, args.factor)
