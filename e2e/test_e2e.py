@@ -156,6 +156,38 @@ def test_undo(browser, study):
         assert not errors, errors
 
 
+def test_keyboard_nudge_redo_flag_space(browser, study):
+    with server(study) as url:
+        page, errors = open_reader(browser, url)
+        i = page.evaluate("S.pts.findIndex(p => p.xy)")
+        page.evaluate(f"S.sel = {i}; renderList();")
+        before = page.evaluate(f"S.pts[{i}].xy.slice()")
+        sx, sy = page.evaluate("[S.view.sx, S.view.sy]")
+        for _ in range(3):
+            page.keyboard.press("ArrowRight")
+        page.keyboard.press("Shift+ArrowDown")
+        after = page.evaluate(f"S.pts[{i}].xy")
+        assert abs(after[0] - (before[0] + 3 / sx)) < 1e-6 and abs(after[1] - (before[1] + 5 / sy)) < 1e-6
+        assert statuses(page)[i] == "moved"
+        assert page.evaluate("S.hist.length") == 1                 # consecutive nudges = one undo step
+        page.keyboard.press("Control+z")
+        assert page.evaluate(f"S.pts[{i}].xy") == before and statuses(page)[i] == "ok"
+        page.keyboard.press("Control+Shift+z")                      # redo
+        assert page.evaluate(f"S.pts[{i}].xy") == after
+        page.keyboard.press("Control+z")
+        page.keyboard.press("Control+y")                            # redo, alternative binding
+        assert page.evaluate(f"S.pts[{i}].xy") == after
+        page.keyboard.press("f")                                    # flag: all not visible
+        assert page.locator("#flag").is_checked() and set(statuses(page)) == {"not_visible"}
+        page.keyboard.press("Control+z")
+        assert not page.locator("#flag").is_checked() and statuses(page)[i] == "moved"
+        # Space jumps to the next unresolved point
+        page.evaluate("S.pts[1].status = 'missing'; S.sel = 0; renderList();")
+        page.keyboard.press(" ")
+        assert page.evaluate("S.sel") == 1
+        assert not errors, errors
+
+
 def test_missing_point_and_scratch_placement(browser, study):
     with server(study) as url:
         total = get(f"{url}/api/r/r1/session")["total"]

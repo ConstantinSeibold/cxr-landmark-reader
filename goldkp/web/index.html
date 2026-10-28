@@ -45,11 +45,12 @@
       <div id="adjLegend" hidden>
         <span class="mk a"></span> reader A <span class="mk b"></span> reader B <span class="mk m"></span> mean
       </div>
-      <label id="flagRow"><input type="checkbox" id="flag"> structure not assessable on this image</label>
+      <label id="flagRow"><input type="checkbox" id="flag"> structure not assessable on this image <span class="muted">(f)</span></label>
       <textarea id="comment" rows="2" placeholder="comment (optional)"></textarea>
       <div id="nav">
         <button id="btnPrev" title="Previous card (Backspace)">◀ Back</button>
         <button id="btnUndo" title="Undo the last change on this card (Ctrl+Z)">↶ Undo</button>
+        <button id="btnRedo" title="Redo (Ctrl+Shift+Z / Ctrl+Y)">↷ Redo</button>
         <button id="btnSubmit" class="primary" title="Submit and next (Enter)">Submit ▶</button>
       </div>
       <div id="msg"></div>
@@ -72,19 +73,26 @@
   <div class="panel">
     <h2>Shortcuts</h2>
     <table>
+      <tr><th colspan="2">Points</th></tr>
       <tr><td>drag</td><td>move a point (status: moved)</td></tr>
       <tr><td>click</td><td>place the selected point when it is missing</td></tr>
-      <tr><td>Tab / ↓ ↑</td><td>select next / previous point</td></tr>
+      <tr><td>← → ↑ ↓</td><td>nudge the selected point by 1 screen pixel (Shift: 5)</td></tr>
+      <tr><td>Tab / Shift+Tab</td><td>select next / previous point</td></tr>
+      <tr><td>Space</td><td>select the next unresolved point</td></tr>
       <tr><td>n</td><td>selected point not visible</td></tr>
       <tr><td>u</td><td>toggle unsure</td></tr>
       <tr><td>r</td><td>reset selected point to the pre-fill</td></tr>
-      <tr><td>h (hold)</td><td>hide the points</td></tr>
-      <tr><td>Ctrl+Z</td><td>undo the last change on this card</td></tr>
-      <tr><td>m</td><td>structure outlines (solid: own structure, dashed: structure the rule reads)</td></tr>
-      <tr><td>c</td><td>crop / full image</td></tr>
-      <tr><td>1 / 2</td><td>reference: example / all levels</td></tr>
+      <tr><td>Ctrl+Z / Ctrl+Shift+Z, Ctrl+Y</td><td>undo / redo (this card)</td></tr>
+      <tr><th colspan="2">Card</th></tr>
       <tr><td>Enter</td><td>submit and next card</td></tr>
       <tr><td>Backspace</td><td>previous card</td></tr>
+      <tr><td>f</td><td>structure not assessable on this image</td></tr>
+      <tr><th colspan="2">View</th></tr>
+      <tr><td>m</td><td>structure outlines (solid: own structure, dashed: structure the rule reads)</td></tr>
+      <tr><td>c</td><td>crop / full image</td></tr>
+      <tr><td>h (hold)</td><td>hide the points</td></tr>
+      <tr><td>1 / 2</td><td>reference: example / all levels</td></tr>
+      <tr><td>?</td><td>this help</td></tr>
       <tr><td>Esc</td><td>cancel a drag / close this help</td></tr>
     </table>
     <button id="helpClose">Close</button>

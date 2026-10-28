@@ -57,3 +57,4 @@ header { display: flex; gap: 14px; align-items: center; padding-bottom: 8px; bor
 #maskLegend .chip { font-size: 12px; padding: 1px 8px; border: 2px solid; border-radius: 10px; background: #000; }
 #maskLegend .chip.rule { border-style: dashed; }
 #nav { gap: 6px; }
+#help th { text-align: left; padding-top: 8px; color: var(--accent); }

@@ -135,21 +135,23 @@ def render(view_data, keys, colours, edges, out: Path, series: bool, title: str,
         if a in at and b in at:
             ax.plot([at[a][0], at[b][0]], [at[a][1], at[b][1]], color="#ffd166", lw=0.9, zorder=4)
     for x, y, key in pts:
-        ax.scatter(x, y, s=26, c=colours[key], edgecolors="white", linewidths=0.6, zorder=5)
+        ax.scatter(x, y, s=130, c="black", linewidths=0, zorder=5)            # dark halo
+        ax.scatter(x, y, s=75, c=colours[key], edgecolors="white", linewidths=1.0, zorder=6)
     if series:
-        done = set()
+        # level label to the right of the instance's outermost point, clear of the markers
+        by_cls: dict = {}
         for x, y, key in pts:
-            cls = key.split("|", 1)[0]
-            if cls in done:
-                continue
-            done.add(cls)
-            ax.text(x + 4, y - 3, instance_label(cls), color="white", fontsize=7, zorder=6,
+            by_cls.setdefault(key.split("|", 1)[0], []).append((x, y))
+        for cls, ps in by_cls.items():
+            x = max(p[0] for p in ps)
+            y = float(np.mean([p[1] for p in ps]))
+            ax.text(x + 10, y, instance_label(cls), color="white", fontsize=7.5, zorder=7, va="center",
                     bbox=dict(boxstyle="round,pad=0.1", fc="black", ec="none", alpha=0.6))
     ax.set_xlim(x0, x1)
     ax.set_ylim(y1, y0)
     ax.axis("off")
     ax.set_title(title, fontsize=10)
-    handles = [plt.Line2D([], [], marker="o", ls="", color=c, markeredgecolor="white", label=n.replace("_", " "))
+    handles = [plt.Line2D([], [], marker="o", ls="", markersize=9, color=c, markeredgecolor="black", label=n.replace("_", " "))
                for n, c in legend]
     handles.append(plt.Line2D([], [], color=OWNER_COL, lw=1.5, label="structure outline"))
     if partners:

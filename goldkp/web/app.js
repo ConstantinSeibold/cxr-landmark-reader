@@ -9,7 +9,7 @@ const post = (u, b) => fetch(u, { method: "POST", headers: { "Content-Type": "ap
 
 const S = {
   mode: "read", rid: null, pos: 0, total: 0, card: null, pts: [], sel: 0,
-  img: null, outlines: null, showMasks: false, hide: false, full: false, hist: [],
+  img: null, outlines: null, showMasks: false, hide: false, full: false, hist: [], redo: [],
   drag: null, activeMs: 0, lastInput: Date.now(), nEvents: 0, refKind: "main",
   view: { x0: 0, y0: 0, x1: 512, y1: 512, sx: 1, sy: 1 },
 };
@@ -52,7 +52,7 @@ async function load(pos) {
   S.pts = S.mode === "adjudicate" ? adjPoints(c) : c.points.map((p) => ({ ...p, n_edits: 0 }));
   S.sel = Math.max(0, S.pts.findIndex((p) => p.status === "missing"));
   S.img = await loadImage(`/api/img/${c.img}`);
-  S.hist = [];
+  S.hist = []; S.redo = [];
   S.outlines = null;
   if (S.showMasks && S.mode !== "adjudicate") S.outlines = await api(`/api/r/${S.rid}/card/${pos}/outlines`);
   renderLegend();
@@ -267,18 +267,49 @@ function canvasPos(e) {
   return [((e.clientX - r.left) * $("#view").width) / r.width, ((e.clientY - r.top) * $("#view").height) / r.height];
 }
 
+const stateNow = () => JSON.stringify({ pts: S.pts.map((p) => ({ xy: p.xy, status: p.status, unsure: p.unsure, n_edits: p.n_edits, choice: p.choice })),
+                                        flag: $("#flag").checked });
+
 function snapshot() {
-  S.hist.push(JSON.stringify({ pts: S.pts.map((p) => ({ xy: p.xy, status: p.status, unsure: p.unsure, n_edits: p.n_edits, choice: p.choice })),
-                               flag: $("#flag").checked }));
+  S.lastNudge = null;
+  S.hist.push(stateNow());
   if (S.hist.length > 200) S.hist.shift();
+  S.redo = [];
+}
+
+function restore(js) {
+  const st = JSON.parse(js);
+  st.pts.forEach((q, i) => Object.assign(S.pts[i], q));
+  $("#flag").checked = st.flag;
+  renderList(); draw();
 }
 
 function undo() {
   if (!S.hist.length || S.drag) return;
-  const st = JSON.parse(S.hist.pop());
-  st.pts.forEach((q, i) => Object.assign(S.pts[i], q));
-  $("#flag").checked = st.flag;
+  S.redo.push(stateNow());
+  restore(S.hist.pop());
+}
+
+function redo() {
+  if (!S.redo.length || S.drag) return;
+  S.hist.push(stateNow());
+  restore(S.redo.pop());
+}
+
+// arrow keys: move the selected point by whole screen pixels (Shift: 5); consecutive nudges
+// of the same point form one undo step
+function nudge(dx, dy) {
+  const p = S.pts[S.sel];
+  if (!p || !p.xy || p.status === "missing" || p.status === "not_visible" || S.mode === "adjudicate") return;
+  if (S.lastNudge !== S.sel) { snapshot(); S.lastNudge = S.sel; }
+  p.xy = [clamp512(p.xy[0] + dx / S.view.sx), clamp512(p.xy[1] + dy / S.view.sy)];
+  if (p.status === "ok") { p.status = "moved"; p.n_edits++; S.nEvents++; }
   renderList(); draw();
+}
+
+function toggleFlag() {
+  $("#flag").checked = !$("#flag").checked;
+  $("#flag").onchange();
 }
 
 function onDown(e) {
@@ -436,11 +467,12 @@ function wire() {
   $("#refMain").onclick = () => setRef("main");
   $("#refSeries").onclick = () => setRef("series");
   $("#btnUndo").onclick = undo;
+  $("#btnRedo").onclick = redo;
   $("#flag").onchange = () => {
-    if ($("#flag").checked) {
-      const was = $("#flag").checked; $("#flag").checked = false; snapshot(); $("#flag").checked = was;
-      S.pts.forEach((p) => { p.status = "not_visible"; }); renderList(); draw();
-    }
+    const now = $("#flag").checked;
+    $("#flag").checked = !now; snapshot(); $("#flag").checked = now;
+    if (now) S.pts.forEach((p) => { p.status = "not_visible"; });
+    renderList(); draw();
   };
   $("#helpBtn").onclick = () => { $("#help").hidden = false; };
   $("#helpClose").onclick = () => { $("#help").hidden = true; };
@@ -455,11 +487,19 @@ function wire() {
       return;
     }
     if (k === "?") { $("#help").hidden = !$("#help").hidden; return; }
+    if ((e.ctrlKey || e.metaKey) && (k.toLowerCase() === "y" || (k.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); redo(); return; }
     if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "z") { e.preventDefault(); undo(); return; }
+    if (k.startsWith("Arrow")) {
+      e.preventDefault();
+      const st = e.shiftKey ? 5 : 1;
+      nudge(k === "ArrowLeft" ? -st : k === "ArrowRight" ? st : 0, k === "ArrowUp" ? -st : k === "ArrowDown" ? st : 0);
+      return;
+    }
     if (k === "Enter") { e.preventDefault(); submit(); }
     else if (k === "Backspace") { e.preventDefault(); if (S.pos > 0) load(S.pos - 1); }
-    else if (k === "Tab" || k === "ArrowDown") { e.preventDefault(); S.sel = (S.sel + (e.shiftKey ? S.pts.length - 1 : 1)) % S.pts.length; renderList(); draw(); }
-    else if (k === "ArrowUp") { e.preventDefault(); S.sel = (S.sel + S.pts.length - 1) % S.pts.length; renderList(); draw(); }
+    else if (k === "Tab") { e.preventDefault(); S.lastNudge = null; S.sel = (S.sel + (e.shiftKey ? S.pts.length - 1 : 1)) % S.pts.length; renderList(); draw(); }
+    else if (k === " ") { e.preventDefault(); S.lastNudge = null; nextUnresolved(); renderList(); draw(); }
+    else if (k === "f") toggleFlag();
     else if (k === "n") setNotVisible();
     else if (k === "u") toggleUnsure();
     else if (k === "r") resetPoint();
