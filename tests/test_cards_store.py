@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from goldkp.cards import build_cards, crop_box, reader_order, series_batch
+from goldkp.cards import build_cards, crop_box, image_blocks, reader_order, series_batch
 from goldkp.store import ReaderStore, VersionMismatch
 from tests.conftest import VOCAB
 
@@ -49,6 +49,22 @@ def test_reader_order_is_a_permutation_and_differs():
     gids = [cards[i]["gid"] for i in o1]
     assert gids.index("G19") > max(i for i, g in enumerate(gids) if g == "G01")  # clinical groups first
 
+
+
+def test_reader_order_in_image_blocks():
+    images = [{"dicom_id": f"d{i}", "view": "frontal" if i < 14 else "lateral", "no_prefill": False}
+              for i in range(20)]
+    cards = build_cards(images, VOCAB, {})
+    blocks = image_blocks(cards, [10, 5])
+    assert [len(b) for b in blocks] == [10, 5, 5]
+    assert sorted(i for b in blocks for i in b) == list(range(20))
+    assert sum(images[i]["view"] == "lateral" for i in blocks[0]) == 3      # keeps the view mix
+    o1, o2 = reader_order(cards, "r1", [10, 5]), reader_order(cards, "r2", [10, 5])
+    assert sorted(o1) == list(range(len(cards))) and o1 != o2
+    for o in (o1, o2):                                  # every block finished before the next
+        seen = [blocks.index(next(b for b in blocks if cards[i]["img"] in b)) for i in o]
+        assert seen == sorted(seen)
+    assert reader_order(cards, "r1", None) == reader_order(cards, "r1")   # default unchanged
 
 def test_store_rebuild_and_latest_wins(tmp_path):
     st = ReaderStore(tmp_path, "r1", "sha", "v")

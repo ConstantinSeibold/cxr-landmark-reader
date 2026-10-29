@@ -115,7 +115,9 @@ Use a separate reader id (e.g. `--readers pilot`) for a pilot so it never mixes 
 - **Not assessable** (`f`): marks the whole structure as not visible on this image; add a comment
   if useful.
 - **Order:** group by group (clinical groups first, then vertebrae and ribs, then zones, vessel
-  and abdominal points), frontal before lateral, images shuffled per reader. Every submit is saved
+  and abdominal points), frontal before lateral, images shuffled per reader. With
+  `--image-blocks 10,5` the server instead finishes the first 10 images in full, then blocks of 5
+  (same images for every reader, same order inside a block). Every submit is saved
   immediately; the session resumes at the first unfinished card.
 - **Navigation:** card number box (type a number, Enter) and the `go to…` menu (first card of every
   group with progress, first scratch card) in the header; Back / Submit pinned at the bottom of

@@ -104,21 +104,49 @@ def cards_sha(cards: list[dict]) -> str:
     return hashlib.sha256(json.dumps(cards, sort_keys=True).encode()).hexdigest()[:16]
 
 
-def reader_order(cards: list[dict], rid: str) -> list[int]:
-    """Group-major order; frontal block before lateral; images shuffled per reader; batches of an
-    image stay consecutive in anatomical order."""
-    rng = random.Random(int(hashlib.sha256(rid.encode()).hexdigest()[:8], 16))
+def _group_major(cards: list[dict], subset: set[int] | None, rng: random.Random) -> list[int]:
     gids = sorted({c["gid"] for c in cards}, key=lambda g: (g in PRIORITY_LAST, PRIORITY_LAST.index(g)
                                                            if g in PRIORITY_LAST else 0, g))
     order = []
     for gid in gids:
         for view in ("frontal", "lateral"):
-            idx = [i for i, c in enumerate(cards) if c["gid"] == gid and c["view"] == view]
+            idx = [i for i, c in enumerate(cards) if c["gid"] == gid and c["view"] == view
+                   and (subset is None or c["img"] in subset)]
             imgs = sorted({cards[i]["img"] for i in idx})
             rng.shuffle(imgs)
             for im in imgs:
                 order += [i for i in idx if cards[i]["img"] == im]
     return order
+
+
+def image_blocks(cards: list[dict], sizes: list[int]) -> list[list[int]]:
+    """Split the images into blocks: the first of sizes[0] images, ..., then blocks of sizes[-1].
+    The image order is the same for every reader (so their finished blocks overlap) and
+    interleaves the views, so each block keeps the frontal/lateral mix of the study."""
+    rng = random.Random(int(hashlib.sha256(b"image-blocks").hexdigest()[:8], 16))
+    views = {c["img"]: c["view"] for c in cards}
+    keyed = []
+    for view in sorted(set(views.values())):
+        imgs = sorted(i for i, v in views.items() if v == view)
+        rng.shuffle(imgs)
+        keyed += [((k + 0.5) / len(imgs), view, im) for k, im in enumerate(imgs)]
+    imgs = [im for _, _, im in sorted(keyed)]
+    blocks, n = [], 0
+    while imgs:
+        size = sizes[min(n, len(sizes) - 1)]
+        blocks.append(imgs[:size])
+        imgs, n = imgs[size:], n + 1
+    return blocks
+
+
+def reader_order(cards: list[dict], rid: str, blocks: list[int] | None = None) -> list[int]:
+    """Group-major order; frontal block before lateral; images shuffled per reader; batches of an
+    image stay consecutive in anatomical order. With blocks (e.g. [10, 5]) the images are read in
+    image blocks (see image_blocks), each finished in full, in that order, before the next."""
+    rng = random.Random(int(hashlib.sha256(rid.encode()).hexdigest()[:8], 16))
+    if not blocks:
+        return _group_major(cards, None, rng)
+    return [i for b in image_blocks(cards, blocks) for i in _group_major(cards, set(b), rng)]
 
 
 def load_cards(path: Path) -> tuple[list[dict], str]:

@@ -254,14 +254,14 @@ async function buildJumpMenu() {
   sel.length = 1;
   const seen = new Map();
   for (const c of d.cards) {
-    const k = `${c.gid}|${c.view}`;
-    if (!seen.has(k)) seen.set(k, { first: c.pos, n: 0, done: 0, gid: c.gid, view: c.view });
+    const k = `${c.block}|${c.gid}|${c.view}`;
+    if (!seen.has(k)) seen.set(k, { first: c.pos, n: 0, done: 0, gid: c.gid, view: c.view, block: c.block });
     const g = seen.get(k); g.n++; g.done += c.done;
   }
   for (const g of seen.values()) {
     const o = document.createElement("option");
     o.value = g.first;
-    o.textContent = `${g.gid} ${d.group_names[g.view][g.gid]} · ${g.view} (${g.done}/${g.n})`;
+    o.textContent = `${g.block ? `block ${g.block} · ` : ""}${g.gid} ${d.group_names[g.view][g.gid]} · ${g.view} (${g.done}/${g.n})`;
     sel.appendChild(o);
   }
   const scratch = d.cards.find((c) => c.mode === "scratch");
