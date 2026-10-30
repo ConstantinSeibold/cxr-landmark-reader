@@ -107,6 +107,36 @@ def test_card_index_for_jumping(study, client_factory):
     assert all("reader" in p and "rule" in p and "method" in p and "note" in p for p in card["points"])
 
 
+def test_shared_subset_order_and_progress(study):
+    from fastapi.testclient import TestClient
+
+    from goldkp.server import create_app
+    data, imgs = study
+    c = TestClient(create_app(data, imgs, ["r1", "r2"], "read", False, None, {"frontal": 1, "lateral": 1}, ["G19"]))
+    for rid in ("r1", "r2"):
+        d = c.get(f"/api/r/{rid}/cards").json()["cards"]
+        blocks = [x["block"] for x in d]
+        assert blocks == sorted(blocks) and set(blocks) == {1, 2}      # shared images first
+        assert d[0]["gid"] == "G19"
+        card = c.get(f"/api/r/{rid}/card/0").json()
+        assert card["block"] == 1
+        s = c.get(f"/api/r/{rid}/session").json()
+        assert s["per_block_group"][f"1|{card['gid']}"]["total"] < s["per_group"][card["gid"]]["total"]
+    with pytest.raises(ValueError):
+        create_app(data, imgs, ["r1"], "read", False, None, None, ["G99"])
+
+
+@pytest.mark.parametrize("flags", [["--image-blocks", "0"], ["--subset", "30,20,5"], ["--subset", "x"],
+                                   ["--image-blocks", "5", "--subset", "30"]])
+def test_order_flags_are_checked(monkeypatch, flags):
+    import sys
+
+    from goldkp import server
+    monkeypatch.setattr(sys, "argv", ["x", "--data", ".", "--images", ".", *flags])
+    with pytest.raises(SystemExit):
+        server.main()
+
+
 def test_partial_export(study, client_factory):
     data, imgs = study
     import shutil

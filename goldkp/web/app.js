@@ -96,7 +96,7 @@ async function updateProgress() {
   }
   const s = await api(`/api/r/${S.rid}/session`);
   $("#progressBar").style.width = `${(100 * s.done) / s.total}%`;
-  const g = s.per_group[S.card.gid];
+  const g = (S.card.block && s.per_block_group[`${S.card.block}|${S.card.gid}`]) || s.per_group[S.card.gid];
   $("#groupProgress").textContent = `${g.done} / ${g.total} done in this group`;
   $("#totalProgress").textContent = `${s.done} / ${s.total} done`;
 }

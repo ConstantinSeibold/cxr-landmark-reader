@@ -109,7 +109,7 @@ def _group_major(cards: list[dict], subset: set[int] | None, rng: random.Random,
     gids = sorted({c["gid"] for c in cards}, key=lambda g: (g in PRIORITY_LAST, PRIORITY_LAST.index(g)
                                                            if g in PRIORITY_LAST else 0, g))
     if groups:
-        gids = [g for g in groups if g in gids] + [g for g in gids if g not in groups]
+        gids = [g for g in dict.fromkeys(groups) if g in gids] + [g for g in gids if g not in groups]
     order = []
     for gid in gids:
         for view in ("frontal", "lateral"):
@@ -138,6 +138,8 @@ def image_blocks(cards: list[dict], sizes: list[int]) -> list[list[int]]:
     """Split the images into blocks: the first of sizes[0] images, ..., then blocks of sizes[-1].
     The image order is the same for every reader (so their finished blocks overlap) and
     interleaves the views, so each block keeps the frontal/lateral mix of the study."""
+    if not sizes or min(sizes) < 1:
+        raise ValueError("image block sizes must be positive")
     imgs = _image_order(cards)
     blocks, n = [], 0
     while imgs:
@@ -168,6 +170,9 @@ def reader_order(cards: list[dict], rid: str, blocks: list[int] | None = None,
     groups again on the remaining images. With blocks (e.g. [10, 5]) the images are read in
     image blocks (see image_blocks), each finished in full, in that order, before the next."""
     rng = random.Random(int(hashlib.sha256(rid.encode()).hexdigest()[:8], 16))
+    unknown = set(groups or []) - {c["gid"] for c in cards}
+    if unknown:
+        raise ValueError(f"unknown groups: {', '.join(sorted(unknown))}")
     if blocks:
         return [i for b in image_blocks(cards, blocks) for i in _group_major(cards, set(b), rng, groups)]
     if subset:

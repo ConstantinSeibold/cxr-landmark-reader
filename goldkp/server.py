@@ -140,9 +140,18 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
             g = per_group.setdefault(c["gid"], {"total": 0, "done": 0})
             g["total"] += 1
             g["done"] += st.latest(c["id"]) is not None
+        # progress inside the card's image block (shared subset or image block), when there are blocks
+        per_block_group: dict = {}
+        for i in orders[rid]:
+            c = cards[i]
+            if block_of:
+                g = per_block_group.setdefault(f"{block_of[c['img']]}|{c['gid']}", {"total": 0, "done": 0})
+                g["total"] += 1
+                g["done"] += st.latest(c["id"]) is not None
         first_open = next((p for p, i in enumerate(orders[rid]) if st.latest(cards[i]["id"]) is None),
                           len(cards))
         return {"total": len(cards), "done": st.done, "cursor": first_open, "per_group": per_group,
+                "per_block_group": per_block_group,
                 "cards_sha": sha, "prefill_version": prefill_version}
 
     @app.get("/api/r/{rid}/cards")
@@ -185,6 +194,7 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
         ref = refs["files"].get(c["gid"], {}).get(view, {})
         return {
             "pos": pos, "total": len(cards), "card_id": c["id"], "img": c["img"], "view": view,
+            "block": block_of.get(c["img"]),
             "gid": c["gid"], "group": {"name": g["name"], "region": g["region"], "description": g["description"]},
             "batch": c["batch"], "box": c["box"], "full": c["full"], "mode": c["mode"],
             "orig_wh": pf.get("orig_wh"), "points": pts,
@@ -340,15 +350,24 @@ def main() -> None:
     args = ap.parse_args()
     if args.image_blocks and args.subset:
         raise SystemExit("--image-blocks and --subset exclude each other")
-    sizes = [int(n) for n in args.subset.split(",") if n.strip()]
+    try:
+        blocks = [int(n) for n in args.image_blocks.split(",") if n.strip()]
+        sizes = [int(n) for n in args.subset.split(",") if n.strip()]
+    except ValueError:
+        raise SystemExit("--image-blocks and --subset take comma-separated whole numbers")
+    if any(n < 1 for n in blocks) or any(n < 0 for n in sizes) or len(sizes) > 2:
+        raise SystemExit("--image-blocks sizes must be positive; --subset is frontal[,lateral], not negative")
     if args.host not in {"127.0.0.1", "localhost", "::1"}:
         raise SystemExit("the reader app only binds to loopback; use an SSH tunnel for remote readers")
     import uvicorn
-    app = create_app(args.data, args.images, [r.strip() for r in args.readers.split(",") if r.strip()],
-                     args.mode, args.allow_version_change,
-                     [int(n) for n in args.image_blocks.split(",") if n.strip()] or None,
-                     dict(zip(("frontal", "lateral"), sizes)) or None,
-                     [g.strip() for g in args.group_order.split(",") if g.strip()] or None)
+    try:
+        app = create_app(args.data, args.images, [r.strip() for r in args.readers.split(",") if r.strip()],
+                         args.mode, args.allow_version_change,
+                         blocks or None,
+                         dict(zip(("frontal", "lateral"), sizes)) or None,
+                         [g.strip() for g in args.group_order.split(",") if g.strip()] or None)
+    except ValueError as e:
+        raise SystemExit(str(e))
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 

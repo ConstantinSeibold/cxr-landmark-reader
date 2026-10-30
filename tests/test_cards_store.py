@@ -84,6 +84,7 @@ def test_reader_order_on_shared_subset():
     first = lambda o: [cards[i]["img"] for i in o if cards[i]["gid"] == "G01"][:5]
     assert set(first(o1)) == set(first(o2)) and first(o1) != first(o2)    # same images, own order
     assert reader_order(cards, "r1", None, None, None) == reader_order(cards, "r1")
+    assert sorted(reader_order(cards, "r1", groups=["G01", "G01"])) == list(range(len(cards)))
 
 def test_store_rebuild_and_latest_wins(tmp_path):
     st = ReaderStore(tmp_path, "r1", "sha", "v")
