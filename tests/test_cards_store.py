@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from goldkp.cards import build_cards, crop_box, image_blocks, reader_order, series_batch
+from goldkp.cards import build_cards, crop_box, image_blocks, reader_order, series_batch, shared_subset
 from goldkp.store import ReaderStore, VersionMismatch
 from tests.conftest import VOCAB
 
@@ -65,6 +65,25 @@ def test_reader_order_in_image_blocks():
         seen = [blocks.index(next(b for b in blocks if cards[i]["img"] in b)) for i in o]
         assert seen == sorted(seen)
     assert reader_order(cards, "r1", None) == reader_order(cards, "r1")   # default unchanged
+
+
+def test_reader_order_on_shared_subset():
+    images = [{"dicom_id": f"d{i}", "view": "frontal" if i < 14 else "lateral", "no_prefill": False}
+              for i in range(20)]
+    cards = build_cards(images, VOCAB, {})
+    sub = shared_subset(cards, {"frontal": 5, "lateral": 2})
+    assert sum(images[i]["view"] == "frontal" for i in sub) == 5 and len(sub) == 7
+    groups = ["G19", "G01"]
+    o1, o2 = (reader_order(cards, r, subset=sub, groups=groups) for r in ("r1", "r2"))
+    assert sorted(o1) == list(range(len(cards))) and o1 != o2
+    for o in (o1, o2):
+        n = sum(cards[i]["img"] in sub for i in o)
+        assert all(cards[i]["img"] in sub for i in o[:n])                 # shared images first
+        gids = [cards[i]["gid"] for i in o[:n]]
+        assert gids[0] == "G19" and gids.index("G01") > max(k for k, g in enumerate(gids) if g == "G19")
+    first = lambda o: [cards[i]["img"] for i in o if cards[i]["gid"] == "G01"][:5]
+    assert set(first(o1)) == set(first(o2)) and first(o1) != first(o2)    # same images, own order
+    assert reader_order(cards, "r1", None, None, None) == reader_order(cards, "r1")
 
 def test_store_rebuild_and_latest_wins(tmp_path):
     st = ReaderStore(tmp_path, "r1", "sha", "v")

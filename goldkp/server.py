@@ -21,7 +21,7 @@ from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from PIL import Image
 
-from .cards import image_blocks, reader_order, rule_partners
+from .cards import image_blocks, reader_order, rule_partners, shared_subset
 from .export import export_reader
 from .store import ReaderStore, write_json_atomic
 
@@ -43,7 +43,8 @@ def _decode_rle(rle: dict) -> np.ndarray:
 
 
 def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "read",
-               allow_version_change: bool = False, blocks: list[int] | None = None) -> FastAPI:
+               allow_version_change: bool = False, blocks: list[int] | None = None,
+               subset: dict[str, int] | None = None, groups: list[str] | None = None) -> FastAPI:
     cards_json = json.load(open(data / "cards.json"))
     cards, sha = cards_json["cards"], cards_json["sha"]
     images = cards_json["images"]
@@ -53,8 +54,11 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
     refs = json.load(open(data / "refs/refs_manifest.json"))
     prefill_dir = data / "prefill" / prefill_version
     stores = {r: ReaderStore(data / "readers", r, sha, prefill_version, allow_version_change) for r in readers}
-    orders = {r: reader_order(cards, r, blocks) for r in readers}
+    shared = shared_subset(cards, subset) if subset else None
+    orders = {r: reader_order(cards, r, blocks, shared, groups) for r in readers}
     block_of = {im: n for n, b in enumerate(image_blocks(cards, blocks), 1) for im in b} if blocks else {}
+    if shared and not blocks:
+        block_of = {c["img"]: 1 if c["img"] in shared else 2 for c in cards}
     ref_files = {f for g in refs["files"].values() for v in g.values() for f in v.values()}
 
     @functools.lru_cache(maxsize=16)
@@ -330,13 +334,21 @@ def main() -> None:
     ap.add_argument("--allow-version-change", action="store_true")
     ap.add_argument("--image-blocks", default="", help="read in image blocks, e.g. 10,5: the first 10 images "
                     "in full, then blocks of 5 (same images for every reader)")
+    ap.add_argument("--subset", default="", help="frontal,lateral image counts read first in every group, "
+                    "e.g. 30,20 (same images for every reader, own order per reader)")
+    ap.add_argument("--group-order", default="", help="groups to read first, in this order, e.g. G13,G12,G15")
     args = ap.parse_args()
+    if args.image_blocks and args.subset:
+        raise SystemExit("--image-blocks and --subset exclude each other")
+    sizes = [int(n) for n in args.subset.split(",") if n.strip()]
     if args.host not in {"127.0.0.1", "localhost", "::1"}:
         raise SystemExit("the reader app only binds to loopback; use an SSH tunnel for remote readers")
     import uvicorn
     app = create_app(args.data, args.images, [r.strip() for r in args.readers.split(",") if r.strip()],
                      args.mode, args.allow_version_change,
-                     [int(n) for n in args.image_blocks.split(",") if n.strip()] or None)
+                     [int(n) for n in args.image_blocks.split(",") if n.strip()] or None,
+                     dict(zip(("frontal", "lateral"), sizes)) or None,
+                     [g.strip() for g in args.group_order.split(",") if g.strip()] or None)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 

@@ -104,9 +104,12 @@ def cards_sha(cards: list[dict]) -> str:
     return hashlib.sha256(json.dumps(cards, sort_keys=True).encode()).hexdigest()[:16]
 
 
-def _group_major(cards: list[dict], subset: set[int] | None, rng: random.Random) -> list[int]:
+def _group_major(cards: list[dict], subset: set[int] | None, rng: random.Random,
+                 groups: list[str] | None = None) -> list[int]:
     gids = sorted({c["gid"] for c in cards}, key=lambda g: (g in PRIORITY_LAST, PRIORITY_LAST.index(g)
                                                            if g in PRIORITY_LAST else 0, g))
+    if groups:
+        gids = [g for g in groups if g in gids] + [g for g in gids if g not in groups]
     order = []
     for gid in gids:
         for view in ("frontal", "lateral"):
@@ -119,10 +122,8 @@ def _group_major(cards: list[dict], subset: set[int] | None, rng: random.Random)
     return order
 
 
-def image_blocks(cards: list[dict], sizes: list[int]) -> list[list[int]]:
-    """Split the images into blocks: the first of sizes[0] images, ..., then blocks of sizes[-1].
-    The image order is the same for every reader (so their finished blocks overlap) and
-    interleaves the views, so each block keeps the frontal/lateral mix of the study."""
+def _image_order(cards: list[dict]) -> list[int]:
+    """Reader-independent image order that interleaves the views by fractional rank."""
     rng = random.Random(int(hashlib.sha256(b"image-blocks").hexdigest()[:8], 16))
     views = {c["img"]: c["view"] for c in cards}
     keyed = []
@@ -130,7 +131,14 @@ def image_blocks(cards: list[dict], sizes: list[int]) -> list[list[int]]:
         imgs = sorted(i for i, v in views.items() if v == view)
         rng.shuffle(imgs)
         keyed += [((k + 0.5) / len(imgs), view, im) for k, im in enumerate(imgs)]
-    imgs = [im for _, _, im in sorted(keyed)]
+    return [im for _, _, im in sorted(keyed)]
+
+
+def image_blocks(cards: list[dict], sizes: list[int]) -> list[list[int]]:
+    """Split the images into blocks: the first of sizes[0] images, ..., then blocks of sizes[-1].
+    The image order is the same for every reader (so their finished blocks overlap) and
+    interleaves the views, so each block keeps the frontal/lateral mix of the study."""
+    imgs = _image_order(cards)
     blocks, n = [], 0
     while imgs:
         size = sizes[min(n, len(sizes) - 1)]
@@ -139,14 +147,33 @@ def image_blocks(cards: list[dict], sizes: list[int]) -> list[list[int]]:
     return blocks
 
 
-def reader_order(cards: list[dict], rid: str, blocks: list[int] | None = None) -> list[int]:
+def shared_subset(cards: list[dict], sizes: dict[str, int]) -> set[int]:
+    """The first sizes[view] images of each view in the reader-independent image order, so every
+    reader reads the same images first (e.g. {"frontal": 30, "lateral": 20})."""
+    views = {c["img"]: c["view"] for c in cards}
+    out, n = set(), dict.fromkeys(sizes, 0)
+    for im in _image_order(cards):
+        v = views[im]
+        if n.get(v, 0) < sizes.get(v, 0):
+            out.add(im)
+            n[v] += 1
+    return out
+
+
+def reader_order(cards: list[dict], rid: str, blocks: list[int] | None = None,
+                 subset: set[int] | None = None, groups: list[str] | None = None) -> list[int]:
     """Group-major order; frontal block before lateral; images shuffled per reader; batches of an
-    image stay consecutive in anatomical order. With blocks (e.g. [10, 5]) the images are read in
+    image stay consecutive in anatomical order. groups puts these groups first, in this order.
+    With subset (see shared_subset) every group is read on the subset images first, then all
+    groups again on the remaining images. With blocks (e.g. [10, 5]) the images are read in
     image blocks (see image_blocks), each finished in full, in that order, before the next."""
     rng = random.Random(int(hashlib.sha256(rid.encode()).hexdigest()[:8], 16))
-    if not blocks:
-        return _group_major(cards, None, rng)
-    return [i for b in image_blocks(cards, blocks) for i in _group_major(cards, set(b), rng)]
+    if blocks:
+        return [i for b in image_blocks(cards, blocks) for i in _group_major(cards, set(b), rng, groups)]
+    if subset:
+        rest = {c["img"] for c in cards} - subset
+        return _group_major(cards, subset, rng, groups) + _group_major(cards, rest, rng, groups)
+    return _group_major(cards, None, rng, groups)
 
 
 def load_cards(path: Path) -> tuple[list[dict], str]:
