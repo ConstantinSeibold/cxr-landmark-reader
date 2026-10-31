@@ -21,7 +21,7 @@ from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from PIL import Image
 
-from .cards import image_blocks, reader_order, rule_partners, shared_subset
+from .cards import DEFAULT_GROUP_ORDER, DEFAULT_SUBSET, image_blocks, reader_order, rule_partners, shared_subset
 from .export import export_reader
 from .store import ReaderStore, write_json_atomic
 
@@ -44,9 +44,14 @@ def _decode_rle(rle: dict) -> np.ndarray:
 
 def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "read",
                allow_version_change: bool = False, blocks: list[int] | None = None,
-               subset: dict[str, int] | None = None, groups: list[str] | None = None) -> FastAPI:
+               subset: dict[str, int] | None = None, groups: list[str] | None = None,
+               skip_unknown_groups: bool = False) -> FastAPI:
     cards_json = json.load(open(data / "cards.json"))
     cards, sha = cards_json["cards"], cards_json["sha"]
+    if groups and skip_unknown_groups:
+        # the default group order may name groups a study does not have
+        present = {c["gid"] for c in cards}
+        groups = [g for g in groups if g in present]
     images = cards_json["images"]
     prefill_version = cards_json["prefill_version"]
     vocab = json.load(open(data / "static/vocab.json"))
@@ -344,12 +349,21 @@ def main() -> None:
     ap.add_argument("--allow-version-change", action="store_true")
     ap.add_argument("--image-blocks", default="", help="read in image blocks, e.g. 10,5: the first 10 images "
                     "in full, then blocks of 5 (same images for every reader)")
-    ap.add_argument("--subset", default="", help="frontal,lateral image counts read first in every group, "
-                    "e.g. 30,20 (same images for every reader, own order per reader)")
-    ap.add_argument("--group-order", default="", help="groups to read first, in this order, e.g. G13,G12,G15")
+    ap.add_argument("--subset", default=None, help="frontal,lateral image counts read first in every group "
+                    "(same images for every reader, own order per reader); default 30,20 unless --image-blocks "
+                    "is given, off to turn it off")
+    ap.add_argument("--group-order", default=None, help="groups to read first, in this order, e.g. G13,G12,G15; "
+                    "default the study order (DEFAULT_GROUP_ORDER in goldkp/cards.py), off to turn it off")
     args = ap.parse_args()
     if args.image_blocks and args.subset:
         raise SystemExit("--image-blocks and --subset exclude each other")
+    default_groups = args.group_order is None
+    if args.subset is None:
+        args.subset = "" if args.image_blocks else ",".join(str(DEFAULT_SUBSET[v]) for v in ("frontal", "lateral"))
+    if default_groups:
+        args.group_order = ",".join(DEFAULT_GROUP_ORDER)
+    args.subset = "" if args.subset.strip().lower() == "off" else args.subset
+    args.group_order = "" if args.group_order.strip().lower() == "off" else args.group_order
     try:
         blocks = [int(n) for n in args.image_blocks.split(",") if n.strip()]
         sizes = [int(n) for n in args.subset.split(",") if n.strip()]
@@ -365,7 +379,8 @@ def main() -> None:
                          args.mode, args.allow_version_change,
                          blocks or None,
                          dict(zip(("frontal", "lateral"), sizes)) or None,
-                         [g.strip() for g in args.group_order.split(",") if g.strip()] or None)
+                         [g.strip() for g in args.group_order.split(",") if g.strip()] or None,
+                         skip_unknown_groups=default_groups)
     except ValueError as e:
         raise SystemExit(str(e))
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")

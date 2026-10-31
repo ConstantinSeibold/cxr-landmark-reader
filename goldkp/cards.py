@@ -19,6 +19,10 @@ PAD_MIN, PAD_FRAC, MIN_SIDE = 16, 0.15, 96
 IMG = 512
 # reading priority: clinical groups first, then the long series, then the abstract groups
 PRIORITY_LAST = ["G19", "G20", "G21", "G25", "G26"]
+# study defaults for the reader app: shared images read first, groups in the agreed reading order
+DEFAULT_SUBSET = {"frontal": 30, "lateral": 20}
+DEFAULT_GROUP_ORDER = ["G13", "G12", "G15", "G14", "G04", "G09", "G07", "G24", "G17", "G18", "G05", "G01",
+                       "G02", "G03", "G22", "G10", "G11", "G08", "G06", "G16", "G19", "G20", "G21", "G25", "G26"]
 
 
 def _vert_level(cls: str) -> tuple[str, int] | None:

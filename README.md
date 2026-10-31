@@ -114,13 +114,14 @@ Use a separate reader id (e.g. `--readers pilot`) for a pilot so it never mixes 
   "Place: …" banner walks through the landmarks, each click places the next one.
 - **Not assessable** (`f`): marks the whole structure as not visible on this image; add a comment
   if useful.
-- **Order:** group by group (clinical groups first, then vertebrae and ribs, then zones, vessel
-  and abdominal points), frontal before lateral, images shuffled per reader. With
-  `--image-blocks 10,5` the server instead finishes the first 10 images in full, then blocks of 5
-  (same images for every reader, own order per reader inside a block). With `--subset 30,20` every group is
-  first read on the same 30 frontal and 20 lateral images for every reader (own order per reader),
-  then on the rest; `--group-order G13,G12,...` puts these groups first. Every submit is saved
-  immediately; the session resumes at the first unfinished card.
+- **Order:** by default every group is first read on the same 30 frontal and 20 lateral images
+  for every reader (own order per reader), then on the rest, with the groups in the study order
+  (`DEFAULT_GROUP_ORDER` in `goldkp/cards.py`: G13, G12, G15, G14, G04, ...), frontal before lateral.
+  `--subset 10,5` and `--group-order G13,G12,...` change this, `--subset off` and
+  `--group-order off` turn it off (then: clinical groups first, then vertebrae and ribs, zones,
+  vessel and abdominal points). With `--image-blocks 10,5` the server instead finishes the first
+  10 images in full, then blocks of 5 (same images for every reader, own order per reader inside a
+  block). Every submit is saved immediately; the session resumes at the first unfinished card.
 - **Navigation:** card number box (type a number, Enter) and the `go to…` menu (first card of every
   group with progress, first scratch card) in the header; Back / Submit pinned at the bottom of
   the side panel. Undo / redo sit at the start of the toolbar above the image.

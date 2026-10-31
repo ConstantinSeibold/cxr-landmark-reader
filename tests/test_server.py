@@ -137,6 +137,42 @@ def test_order_flags_are_checked(monkeypatch, flags):
         server.main()
 
 
+@pytest.mark.parametrize("flags, subset, groups", [
+    ([], {"frontal": 30, "lateral": 20}, "default"),
+    (["--image-blocks", "10,5"], None, "default"),
+    (["--subset", "off", "--group-order", "off"], None, None),
+    (["--subset", "5,2", "--group-order", "G19"], {"frontal": 5, "lateral": 2}, ["G19"]),
+])
+def test_default_reading_order(monkeypatch, flags, subset, groups):
+    import sys
+
+    from goldkp import server
+    from goldkp.cards import DEFAULT_GROUP_ORDER
+    seen = {}
+
+    def fake_app(data, images, readers, mode, allow, blocks, sub, grp, skip_unknown_groups=False):
+        seen.update(subset=sub, groups=grp, skip=skip_unknown_groups)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(server, "create_app", fake_app)
+    monkeypatch.setattr(sys, "argv", ["x", "--data", ".", "--images", ".", *flags])
+    with pytest.raises(SystemExit):
+        server.main()
+    assert seen["subset"] == subset
+    assert seen["groups"] == (DEFAULT_GROUP_ORDER if groups == "default" else groups)
+    assert seen["skip"] == (groups == "default")
+
+
+def test_default_group_order_skips_missing_groups(study):
+    from fastapi.testclient import TestClient
+
+    from goldkp.cards import DEFAULT_GROUP_ORDER
+    from goldkp.server import create_app
+    data, imgs = study
+    c = TestClient(create_app(data, imgs, ["r1"], groups=DEFAULT_GROUP_ORDER + ["G99"], skip_unknown_groups=True))
+    assert c.get("/api/r/r1/cards").status_code == 200
+
+
 def test_partial_export(study, client_factory):
     data, imgs = study
     import shutil
