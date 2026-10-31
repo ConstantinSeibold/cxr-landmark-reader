@@ -160,7 +160,7 @@ def main() -> None:
                 pts = [{"key": q["key"], "status": "added" if q["xy"] is None else "ok", "unsure": False,
                         "xy": [min(511.0, (q["xy"] or [200.0 + j, 200.0])[0] + (shift if pos == 0 else 0)),
                                (q["xy"] or [200.0, 200.0 + j])[1]]} for j, q in enumerate(c["points"])]
-                post(f"{url}/api/r/{rid}/card/{pos}/submit", {"points": pts})
+                post(f"{url}/api/r/{rid}/card/{pos}/submit", {"card_id": c["card_id"], "points": pts})
     subprocess.run([sys.executable, str(ROOT / "aggregate.py"), "--data", str(data2), "--categories", str(args.gt)],
                    check=True, capture_output=True, cwd=ROOT)
     with server(data2, mode="adjudicate") as url, sync_playwright() as p:

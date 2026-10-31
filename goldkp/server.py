@@ -13,6 +13,7 @@ import argparse
 import functools
 import io
 import json
+import math
 import time
 from pathlib import Path
 
@@ -23,11 +24,26 @@ from PIL import Image
 
 from .cards import DEFAULT_GROUP_ORDER, DEFAULT_SUBSET, image_blocks, reader_order, rule_partners, shared_subset
 from .export import export_reader
-from .store import ReaderStore, write_json_atomic
+from .store import ReaderStore, VersionMismatch, write_json_atomic
 
 WEB = Path(__file__).resolve().parent / "web"
 APP_VERSION = "0.1"
 STATUSES = {"ok", "moved", "added", "not_visible"}
+FLAGS = {None, "not_assessable"}
+
+
+def _xy(v) -> bool:
+    """A point in the 512 frame: two finite numbers (not booleans) inside the image."""
+    return (isinstance(v, list) and len(v) == 2
+            and all(isinstance(t, (int, float)) and not isinstance(t, bool) and math.isfinite(t) for t in v)
+            and 0 <= v[0] < 512 and 0 <= v[1] < 512)
+
+
+def _count(v, what: str) -> int:
+    """A non-negative whole count from the client (time in ms, number of edits)."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0:
+        raise HTTPException(422, f"{what} must be a non-negative number")
+    return int(min(v, 10**12))
 MASK_COLOURS = ["#00e5ff", "#7CFC00", "#ff6ec7", "#ffffff", "#c0a0ff", "#40ffa0"]   # own structures
 PARTNER_COLOURS = ["#ffb000", "#ff7a00", "#ffd84d", "#ff9e7a", "#e0c060", "#ffaa55"]  # structures the rules read
 CSP = ("default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
@@ -124,6 +140,7 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
     def store_of(rid: str) -> ReaderStore:
         if rid not in stores:
             raise HTTPException(404, "unknown reader")
+        stores[rid].sync()
         return stores[rid]
 
     def card_at(rid: str, pos: int) -> dict:
@@ -165,7 +182,8 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
                 g["done"] += st.latest(c["id"]) is not None
         first_open = next((p for p, i in enumerate(orders[rid]) if st.latest(cards[i]["id"]) is None),
                           len(cards))
-        return {"total": len(cards), "done": st.done, "cursor": first_open, "per_group": per_group,
+        done = sum(1 for i in orders[rid] if st.latest(cards[i]["id"]) is not None)
+        return {"total": len(cards), "done": done, "cursor": first_open, "per_group": per_group,
                 "per_block_group": per_block_group,
                 "cards_sha": sha, "prefill_version": prefill_version}
 
@@ -224,9 +242,18 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
     def submit(rid: str, pos: int, body: dict = Body(...)):
         st = store_of(rid)
         c = card_at(rid, pos)
-        got = {p.get("key"): p for p in body.get("points", [])}
-        if set(got) != set(c["keys"]):
-            raise HTTPException(422, "points must cover exactly the card's landmarks")
+        # the position alone is not enough: the reading order can change between loading and submitting
+        # (server restarted with other order flags), and the answer would land on another image
+        if body.get("card_id") != c["id"]:
+            raise HTTPException(409, "this card changed on the server; reload the page")
+        pts_in = body.get("points")
+        if not isinstance(pts_in, list) or not all(isinstance(p, dict) for p in pts_in):
+            raise HTTPException(422, "points must be a list of objects")
+        got = {p.get("key"): p for p in pts_in}
+        if len(got) != len(pts_in) or set(got) != set(c["keys"]):
+            raise HTTPException(422, "points must cover exactly the card's landmarks, once each")
+        if body.get("flag") not in FLAGS:
+            raise HTTPException(422, "invalid flag")
         pf = prefill(c["img"])
         out = []
         for key in c["keys"]:
@@ -237,19 +264,19 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
             xy = p.get("xy")
             if status == "not_visible":
                 xy = None
-            elif not (isinstance(xy, list) and len(xy) == 2 and all(isinstance(v, (int, float)) for v in xy)
-                      and 0 <= xy[0] < 512 and 0 <= xy[1] < 512):
+            elif not _xy(xy):
                 raise HTTPException(422, f"coordinates of {key} outside the image")
             cls, kp = key.split("|", 1)
             pre = pf["points"].get(cls, {}).get(kp)
             out.append({"key": key, "status": status, "unsure": bool(p.get("unsure")), "xy": xy,
                         "prefill": pre if c["mode"] == "prefill" else None,
-                        "n_edits": int(p.get("n_edits", 0))})
+                        "n_edits": _count(p.get("n_edits", 0), "n_edits")})
         rec = {"ts": time.time(), "rid": rid, "pos": pos, "card_id": c["id"], "dicom_id": c["dicom_id"],
                "view": c["view"], "gid": c["gid"], "batch": c["batch"], "mode": c["mode"],
                "prefill_version": prefill_version, "cards_sha": sha, "app_version": APP_VERSION,
                "points": out, "card_flag": body.get("flag"), "comment": str(body.get("comment", ""))[:2000],
-               "active_ms": int(body.get("active_ms", 0)), "n_events": int(body.get("n_events", 0))}
+               "active_ms": _count(body.get("active_ms", 0), "active_ms"),
+               "n_events": _count(body.get("n_events", 0), "n_events")}
         st.append(rec)
         return {"ok": True, "next": min(pos + 1, len(cards) - 1), "done": st.done}
 
@@ -288,6 +315,12 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
             raise HTTPException(404)
         return json.load(open(queue_path)) if queue_path.exists() else []
 
+    def resolved_rec(st: dict, it: dict) -> dict | None:
+        """The decision for this queue item, only when it was made on the same card (a re-run of
+        aggregate.py can rebuild the queue)."""
+        rec = st.get(it["item_id"])
+        return rec if rec and rec.get("card_id") == it["card_id"] else None
+
     def adj_state() -> dict:
         p = adj_dir / "state.json"
         return json.load(open(p)) if p.exists() else {}
@@ -296,8 +329,8 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
     def adj_session():
         q = adj_queue()
         st = adj_state()
-        return {"total": len(q), "done": sum(1 for it in q if it["item_id"] in st),
-                "cursor": next((i for i, it in enumerate(q) if it["item_id"] not in st), len(q))}
+        return {"total": len(q), "done": sum(1 for it in q if resolved_rec(st, it)),
+                "cursor": next((i for i, it in enumerate(q) if not resolved_rec(st, it)), len(q))}
 
     @app.get("/api/adj/item/{i}")
     def adj_item(i: int):
@@ -319,7 +352,7 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
                 "gid": c["gid"], "group": {"name": g["name"], "region": g["region"], "description": g["description"]},
                 "batch": c["batch"], "box": c["box"], "full": c["full"], "orig_wh": prefill(c["img"]).get("orig_wh"),
                 **scale(c["img"]), "keys": keys, "refs": {k: f"/api/ref/{v}" for k, v in ref.items()},
-                "resolved": adj_state().get(it["item_id"])}
+                "resolved": resolved_rec(adj_state(), it)}
 
     @app.post("/api/adj/item/{i}/resolve")
     def adj_resolve(i: int, body: dict = Body(...)):
@@ -327,15 +360,22 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
         if not 0 <= i < len(q):
             raise HTTPException(404)
         it = q[i]
-        allowed = {k["key"] for k in it["keys"]}
-        res = body.get("keys", {})
-        if set(res) != allowed:
+        if body.get("item_id") != it["item_id"]:
+            raise HTTPException(409, "the adjudication queue changed; reload the page")
+        sides = {k["key"]: k for k in it["keys"]}
+        res = body.get("keys")
+        if not isinstance(res, dict) or set(res) != set(sides):
             raise HTTPException(422, "resolve every flagged landmark")
         for k, v in res.items():
-            if v.get("choice") not in {"A", "B", "mean", "new", "not_visible"}:
+            ch = v.get("choice") if isinstance(v, dict) else None
+            if ch not in {"A", "B", "mean", "new", "not_visible"}:
                 raise HTTPException(422, f"invalid choice for {k}")
-            if v["choice"] == "new" and not (isinstance(v.get("xy"), list) and len(v["xy"]) == 2):
-                raise HTTPException(422, f"new position missing for {k}")
+            need = {"A": ["a"], "B": ["b"], "mean": ["a", "b"]}.get(ch, [])
+            if any(sides[k].get(s) is None for s in need):
+                raise HTTPException(422, f"{ch} is not available for {k} (that reader marked it not visible)")
+            if ch == "new" and not _xy(v.get("xy")):
+                raise HTTPException(422, f"new position missing or outside the image for {k}")
+            res[k] = {"choice": ch, "xy": v.get("xy") if ch == "new" else None}
         rec = {"ts": time.time(), "item_id": it["item_id"], "card_id": it["card_id"], "keys": res}
         adj_dir.mkdir(parents=True, exist_ok=True)
         with open(adj_dir / "decisions.jsonl", "a") as f:
@@ -367,6 +407,8 @@ def main() -> None:
     ap.add_argument("--group-order", default=None, help="groups to read first, in this order, e.g. G13,G12,G15; "
                     "default the study order (DEFAULT_GROUP_ORDER in goldkp/cards.py), off to turn it off")
     args = ap.parse_args()
+    if args.subset is not None and args.subset.strip().lower() == "off":
+        args.subset = ""
     if args.image_blocks and args.subset:
         raise SystemExit("--image-blocks and --subset exclude each other")
     default_groups = args.group_order is None
@@ -395,7 +437,7 @@ def main() -> None:
                          dict(zip(("frontal", "lateral"), sizes)) or None,
                          [g.strip() for g in args.group_order.split(",") if g.strip()] or None,
                          skip_unknown_groups=default_groups, pixel_spacing=args.pixel_spacing)
-    except ValueError as e:
+    except (ValueError, VersionMismatch) as e:
         raise SystemExit(str(e))
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 

@@ -13,7 +13,7 @@ def answer(card, shift=(0.0, 0.0), status="ok"):
         xy = p["xy"] or [100.0, 100.0]
         pts.append({"key": p["key"], "status": status if p["xy"] else "added", "unsure": False,
                     "xy": [xy[0] + shift[0], xy[1] + shift[1]], "n_edits": 0})
-    return {"points": pts, "active_ms": 1000, "n_events": 1}
+    return {"card_id": card["card_id"], "points": pts, "active_ms": 1000, "n_events": 1}
 
 
 def test_card_payload_and_submit_roundtrip(study, client_factory):

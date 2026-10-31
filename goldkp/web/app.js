@@ -114,16 +114,33 @@ async function enter(rid, pos = null) {
 }
 
 // ---------------- loading a card ----------------
+// everything of the next card is fetched first and switched in one step, so the screen never shows
+// one card while edits go to another; while it loads, input is ignored; a newer load wins
+let loadSeq = 0;
 async function load(pos) {
+  const seq = ++loadSeq;
+  S.loading = true;
+  if (S.base != null) saveDraft();                 // keep unsaved changes of the card being left
+  try {
+    const c = S.mode === "adjudicate" ? await api(`/api/adj/item/${pos}`) : await api(`/api/r/${S.rid}/card/${pos}`);
+    const img = await loadImage(`/api/img/${c.img}`);
+    const outlines = S.showMasks && S.mode !== "adjudicate" ? await api(`/api/r/${S.rid}/card/${pos}/outlines`) : null;
+    if (seq !== loadSeq) return;
+    commitCard(c, pos, img, outlines);
+  } catch (err) {
+    if (seq === loadSeq) $("#msg").textContent = `Could not load card ${pos + 1}: ${err.message}`;
+  } finally {
+    if (seq === loadSeq) S.loading = false;
+  }
+}
+
+function commitCard(c, pos, img, outlines) {
   $("#msg").textContent = "";
-  const c = S.mode === "adjudicate" ? await api(`/api/adj/item/${pos}`) : await api(`/api/r/${S.rid}/card/${pos}`);
-  S.card = c; S.pos = pos; S.full = c.full; S.activeMs = 0; S.nEvents = 0;
+  S.card = c; S.pos = pos; S.full = c.full; S.activeMs = 0; S.nEvents = 0; S.img = img; S.outlines = outlines;
   S.pts = S.mode === "adjudicate" ? adjPoints(c) : c.points.map((p) => ({ ...p, n_edits: 0 }));
   S.sel = Math.max(0, S.pts.findIndex((p) => p.status === "missing"));
-  S.img = await loadImage(`/api/img/${c.img}`);
-  S.hist = []; S.redo = []; S.line = null; S.zoomBox = null;
-  S.outlines = null;
-  if (S.showMasks && S.mode !== "adjudicate") S.outlines = await api(`/api/r/${S.rid}/card/${pos}/outlines`);
+  S.hist = []; S.redo = []; S.line = null; S.zoomBox = null; S.lastNudge = null; S.drag = null; S.pan = null;
+  S.preFlag = null;
   renderLegend();
   $("#flag").checked = !!c.flag;
   $("#comment").value = c.comment || "";
@@ -393,7 +410,7 @@ async function buildJumpMenu() {
 
 function jumpTo(pos) {
   if (Number.isInteger(pos) && pos >= 0 && pos < S.total) load(pos);
-  else $("#msg").textContent = `No card ${pos + 1}.`;
+  else $("#msg").textContent = Number.isInteger(pos) ? `No card ${pos + 1}.` : "Type a card number.";
 }
 
 // ---------------- definition of the selected point ----------------
@@ -455,6 +472,7 @@ const complete = () => S.pts.every(resolved);
 
 // ---------------- interaction ----------------
 function hitTest(px, py) {
+  if (S.hide) return -1;                           // hidden points cannot be grabbed
   let best = -1, bd = HIT;
   S.pts.forEach((p, i) => {
     const xy = S.mode === "adjudicate" ? (p.choice === "new" ? p.xy : null) : (p.status !== "missing" && p.status !== "not_visible" ? p.xy : null);
@@ -489,12 +507,14 @@ function restore(js) {
 }
 
 function undo() {
+  S.lastNudge = null;
   if (!S.hist.length || S.drag) return;
   S.redo.push(stateNow());
   restore(S.hist.pop());
 }
 
 function redo() {
+  S.lastNudge = null;
   if (!S.redo.length || S.drag) return;
   S.hist.push(stateNow());
   restore(S.redo.pop());
@@ -516,8 +536,16 @@ function toggleFlag() {
   $("#flag").onchange();
 }
 
+// placing or moving a point on a card flagged "not assessable" makes it assessable again
+function unflag() {
+  if (S.mode === "adjudicate" || !$("#flag").checked) return;
+  $("#flag").checked = false;
+  S.preFlag = null;
+}
+
 function onDown(e) {
   touch();
+  if (e.button !== 0 || S.loading || !S.card) return;
   const [px, py] = canvasPos(e);
   if (S.ruler) {
     const at = toImage(px, py).map(clamp512);
@@ -533,7 +561,8 @@ function onDown(e) {
     const p = S.pts[hit];
     // keep the grab offset so an off-centre grab does not make the point jump to the cursor
     const [qx, qy] = toCanvas(...p.xy);
-    S.drag = { i: hit, from: p.xy.slice(), status: p.status, moved: false, dx: px - qx, dy: py - qy, sx: px, sy: py };
+    S.drag = { i: hit, from: p.xy.slice(), status: p.status, moved: false, dx: px - qx, dy: py - qy, sx: px, sy: py,
+               nEvents: S.nEvents };
     $("#view").setPointerCapture(e.pointerId);
   } else {
     // a press on empty image: a pan if it moves, else a click (see onUp)
@@ -546,12 +575,14 @@ function onDown(e) {
 
 // a click on empty image: place the selected point when it is missing
 function clickAt(px, py) {
+  if (S.hide) return;
   const p = S.pts[S.sel];
   if (p && S.mode !== "adjudicate" && (p.status === "missing" || p.status === "not_visible")) {
     snapshot();
     p.xy = toImage(px, py).map(clamp512);
     p.status = p.prefill ? "moved" : "added";
     p.n_edits++; S.nEvents++;
+    unflag();
     nextUnresolved();
   } else if (p && S.mode === "adjudicate" && p.choice === "new") {
     snapshot();
@@ -578,17 +609,18 @@ function onMove(e) {
   // a click to select a point is not a move
   if (!S.drag.moved && Math.hypot(px - S.drag.sx, py - S.drag.sy) < DRAG_MIN) return;
   p.xy = toImage(px - S.drag.dx, py - S.drag.dy).map(clamp512);
-  if (!S.drag.moved && S.mode !== "adjudicate") { S.drag.moved = true; p.status = p.prefill ? "moved" : "added"; p.n_edits++; S.nEvents++; }
+  if (!S.drag.moved && S.mode !== "adjudicate") { S.drag.moved = true; p.status = p.prefill ? "moved" : "added"; p.n_edits++; S.nEvents++; unflag(); }
   S.drag.moved = true;
   draw();
 }
 
-function onUp() {
+// click = false: the pointer was cancelled (touch or pen gesture, lost capture); end without acting
+function onUp(e, click = true) {
   if (S.pan) {
     const { moved, sx, sy } = S.pan;
     S.pan = null;
     $("#view").classList.remove("panning");
-    if (!moved) clickAt(sx, sy);
+    if (!moved && click) clickAt(sx, sy);
     return;
   }
   if (S.line && S.line.live) {
@@ -632,7 +664,11 @@ async function toggleMasks() {
   S.showMasks = !S.showMasks;
   savePrefs();
   $("#btnMasks").textContent = `Outlines: ${S.showMasks ? "on" : "off"}`;
-  if (S.showMasks && !S.outlines) S.outlines = await api(`/api/r/${S.rid}/card/${S.pos}/outlines`);
+  if (S.showMasks && !S.outlines) {
+    const card = S.card, o = await api(`/api/r/${S.rid}/card/${S.pos}/outlines`);
+    if (card !== S.card || !S.showMasks) return;
+    S.outlines = o;
+  }
   renderLegend();
   draw();
 }
@@ -668,27 +704,40 @@ function onWheel(e) {
   const k = e.ctrlKey ? 0.01 : 0.0015;
   const [px, py] = canvasPos(e);
   zoomAt(Math.exp(-e.deltaY * k), px, py);
+  // a zoom during a pan: continue the pan from the new view
+  if (S.pan) Object.assign(S.pan, { sx: px, sy: py, box: [S.view.x0, S.view.y0, S.view.x1 - S.view.x0] });
 }
 
 async function submit() {
+  if (S.submitting || S.loading || S.drag || S.pan) return;
   if (!complete()) { $("#msg").textContent = "Resolve every landmark first (place it or mark it not visible)."; return; }
+  S.submitting = true;
   try {
     let r;
     if (S.mode === "adjudicate") {
       const keys = {};
       S.pts.forEach((p) => { keys[p.key] = { choice: p.choice, xy: p.choice === "new" ? p.xy : null }; });
-      r = await post(`/api/adj/item/${S.pos}/resolve`, { keys });
+      r = await post(`/api/adj/item/${S.pos}/resolve`, { item_id: S.card.item_id, keys });
     } else {
       r = await post(`/api/r/${S.rid}/card/${S.pos}/submit`, {
+        card_id: S.card.card_id,
         points: S.pts.map((p) => ({ key: p.key, status: p.status, unsure: p.unsure, xy: p.xy, n_edits: p.n_edits })),
         flag: $("#flag").checked ? "not_assessable" : null, comment: $("#comment").value,
         active_ms: S.activeMs, n_events: S.nEvents,
       });
     }
     if (S.mode !== "adjudicate") { LS.del(draftKey()); S.base = null; buildJumpMenu(); }
-    if (S.pos >= S.total - 1) { $("#banner").textContent = "All cards done — thank you."; updateProgress(); return; }
+    if (S.pos >= S.total - 1) {
+      // the last position is not necessarily the last open card (jumping around)
+      const s = await api(S.mode === "adjudicate" ? "/api/adj/session" : `/api/r/${S.rid}/session`);
+      updateProgress();
+      if (s.cursor < s.total) { await load(s.cursor); $("#msg").textContent = `Saved. Card ${s.cursor + 1} is still open.`; }
+      else { S.base = stateNow(); S.baseComment = $("#comment").value; $("#msg").textContent = "All cards done. Thank you."; }
+      return;
+    }
     await load(r.next);
   } catch (err) { $("#msg").textContent = `Not saved: ${err.message}`; }
+  finally { S.submitting = false; }
 }
 
 // ---------------- adjudication ----------------
@@ -763,7 +812,19 @@ function wire() {
   document.addEventListener("visibilitychange", () => { if (document.hidden) saveDraft(); });
   $("#who").onclick = () => { LS.del("last"); location.reload(); };
   $("#btnResetView").onclick = resetImage;
-  window.addEventListener("resize", () => { if (S.card) { layout(); draw(); } });
+  window.addEventListener("resize", () => {
+    if (!S.card) return;
+    const w = S.window; layout(); S.window = w; draw();     // keep the window level of this card
+  });
+  cv.addEventListener("pointercancel", (e) => onUp(e, false));
+  cv.addEventListener("lostpointercapture", (e) => onUp(e, false));
+  // hidden points come back however the hold ends (released elsewhere, window left)
+  const unhide = () => { if (S.hide) { S.hide = false; draw(); } };
+  window.addEventListener("pointerup", unhide);
+  window.addEventListener("blur", unhide);
+  // a clicked control gives the focus back, so shortcuts (Enter, arrows, Space) keep working
+  document.addEventListener("change", (e) => { if (e.target.matches("input[type=range], input[type=checkbox]")) e.target.blur(); });
+  document.addEventListener("click", (e) => { const b = e.target.closest("button"); if (b && e.detail > 0) b.blur(); });
   $("#refMain").onclick = () => setRef("main");
   $("#refSeries").onclick = () => setRef("series");
   $("#btnUndo").onclick = undo;
@@ -784,24 +845,34 @@ function wire() {
   $("#flag").onchange = () => {
     const now = $("#flag").checked;
     $("#flag").checked = !now; snapshot(); $("#flag").checked = now;
-    if (now) S.pts.forEach((p) => { p.status = "not_visible"; });
+    if (now) {
+      S.preFlag = S.pts.map((p) => p.status);
+      S.pts.forEach((p) => { p.status = "not_visible"; });
+    } else if (S.preFlag) {
+      S.pts.forEach((p, i) => { if (p.status === "not_visible") p.status = S.preFlag[i]; });
+      S.preFlag = null;
+    }
     renderList(); draw();
   };
   $("#helpBtn").onclick = () => { $("#help").hidden = false; };
   $("#helpClose").onclick = () => { $("#help").hidden = true; };
   document.addEventListener("keydown", (e) => {
+    touch();                                       // typing a comment is active time too
     const t = e.target.tagName;
     if (t === "INPUT" || t === "TEXTAREA" || t === "SELECT" || !S.card) return;
-    touch();
-    const k = e.key;
+    const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;    // Caps Lock does not matter
     if (k === "Escape") {
       if (!$("#help").hidden) { $("#help").hidden = true; return; }
       if (S.line) { S.line = null; draw(); return; }
-      if (S.drag) { const p = S.pts[S.drag.i]; p.xy = S.drag.from; p.status = S.drag.status; S.drag = null; renderList(); draw(); }
+      if (S.drag) {                                // back to before the drag, edit counts included
+        const n = S.drag.nEvents;
+        S.drag = null; restore(S.hist.pop()); S.nEvents = n;
+      }
       return;
     }
     if (k === "?") { $("#help").hidden = !$("#help").hidden; return; }
-    if (!$("#help").hidden) return;                          // the help overlay takes no edits
+    if (!$("#help").hidden || S.loading) return;            // no edits under the help overlay or while loading
+    if (k === "Enter" && e.repeat) { e.preventDefault(); return; }          // holding Enter submits once
     if ((e.ctrlKey || e.metaKey) && (k.toLowerCase() === "y" || (k.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); redo(); return; }
     if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "z") { e.preventDefault(); undo(); return; }
     if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "s") { e.preventDefault(); if (S.mode !== "adjudicate") exportNow(); return; }
@@ -810,6 +881,12 @@ function wire() {
       const v = S.view, step = (v.x1 - v.x0) / 5;
       setBox(v.x0 + (k === "ArrowLeft" ? -step : k === "ArrowRight" ? step : 0),
              v.y0 + (k === "ArrowUp" ? -step : k === "ArrowDown" ? step : 0), v.x1 - v.x0);
+      return;
+    }
+    // [ ] { } need Option (Mac) or AltGr (= Ctrl+Alt, Windows) on many keyboards, e.g. German
+    if ("[]{}".includes(k) && !e.metaKey && (!e.ctrlKey || e.altKey)) {
+      if (k === "[" || k === "]") adjust("#bright", k === "]" ? 10 : -10);
+      else adjust("#contrast", k === "}" ? 10 : -10);
       return;
     }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -837,11 +914,9 @@ function wire() {
     else if (k === "2" && S.card.refs.series) setRef("series");
     else if (k === "h" && !S.hide) { S.hide = true; draw(); }
     else if (k === "g") { e.preventDefault(); $("#jump").focus(); }
-    else if (k === "[" || k === "]") adjust("#bright", k === "]" ? 10 : -10);
-    else if (k === "{" || k === "}") adjust("#contrast", k === "}" ? 10 : -10);
     else if (k === "0") resetImage();
   });
-  document.addEventListener("keyup", (e) => { if (e.key === "h" && S.hide) { S.hide = false; draw(); } });
+  document.addEventListener("keyup", (e) => { if (e.key.toLowerCase() === "h" && S.hide) { S.hide = false; draw(); } });
 }
 
 wire();

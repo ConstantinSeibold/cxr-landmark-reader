@@ -328,7 +328,7 @@ def test_adjudication_flow(browser, study):
                     d = shift if pos == 0 else 0.0
                     pts.append({"key": p["key"], "status": "added" if p["xy"] is None else "ok", "unsure": False,
                                 "xy": [min(511.0, xy[0] + d), xy[1]]})
-                post(f"{url}/api/r/{rid}/card/{pos}/submit", {"points": pts})
+                post(f"{url}/api/r/{rid}/card/{pos}/submit", {"card_id": c["card_id"], "points": pts})
     cats = Path(os.environ.get("PAXRAY_KP_JSON", "missing"))
     if not cats.exists():
         pytest.skip("set PAXRAY_KP_JSON to the PAXRay++ keypoint json (categories for the gold COCO)")

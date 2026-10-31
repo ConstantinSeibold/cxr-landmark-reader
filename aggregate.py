@@ -27,11 +27,15 @@ import argparse
 import json
 import math
 import random
+import hashlib
+import sys
 from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from goldkp.store import load_state
 
 VISIBLE = {"ok", "moved", "added"}
 SERIES = {"G19", "G20"}
@@ -65,7 +69,7 @@ def sigma_robust(r: np.ndarray, factor: float) -> float:
 def pairs_table(data: Path, readers: list[str]) -> tuple[pd.DataFrame, dict]:
     cj = json.load(open(data / "cards.json"))
     pf_dir = data / "prefill" / cj["prefill_version"]
-    states = {r: json.load(open(data / "readers" / r / "state.json"))["latest"] for r in readers}
+    states = {r: load_state(data / "readers" / r)["latest"] for r in readers}
     areas_by_class = defaultdict(list)
     prefill = {}
     for im in cj["images"]:
@@ -95,6 +99,8 @@ def pairs_table(data: Path, readers: list[str]) -> tuple[pd.DataFrame, dict]:
                              t_a=recs[0].get("active_ms", 0) / len(c["keys"]), t_b=recs[1].get("active_ms", 0) / len(c["keys"]),
                              pre=pre[:2] if pre and pre[2] > 0 else None, pre_src=pre[3] if pre else "none"))
     df = pd.DataFrame(rows)
+    if df.empty:                                   # no card read by both readers yet (main reports it)
+        return df, cj
     df["vis_a"] = df.st_a.isin(VISIBLE)
     df["vis_b"] = df.st_b.isin(VISIBLE)
     both = df.vis_a & df.vis_b
@@ -140,11 +146,13 @@ def decide(df: pd.DataFrame, sig: pd.DataFrame, factor: float) -> pd.DataFrame:
 
 
 def adjudication_queue(df: pd.DataFrame, seed: int = 0) -> tuple[list, dict]:
-    rng = random.Random(seed)
     queue, amap = [], {}
     for cid, g in df[df.reason != ""].groupby("card_id", sort=False):
-        swap = rng.random() < 0.5
-        item_id = f"adj{len(queue):05d}"
+        # id and A/B side depend on the card only, so a re-run (a reader revised a card) keeps every
+        # decision already made on its card
+        h = hashlib.sha256(f"{seed}|{cid}".encode()).hexdigest()
+        swap = random.Random(int(h[:8], 16)).random() < 0.5
+        item_id = f"adj-{h[:12]}"
         amap[item_id] = {"card_id": cid, "A": "b" if swap else "a"}
         keys = []
         for row in g.itertuples():
@@ -163,8 +171,13 @@ def merge_adjudication(df: pd.DataFrame, data: Path, amap: dict) -> pd.DataFrame
     st = json.load(open(st_path))
     df = df.copy()
     idx = {(r.card_id, r.key): i for i, r in zip(df.index, df.itertuples())}
+    stale = 0
     for item_id, rec in st.items():
-        first = amap[item_id]["A"]
+        m = amap.get(item_id)
+        if m is None or m["card_id"] != rec.get("card_id"):
+            stale += 1                             # decided on a queue that has been rebuilt since
+            continue
+        first = m["A"]
         for key, v in rec["keys"].items():
             i = idx.get((rec["card_id"], key))
             if i is None:
@@ -175,6 +188,9 @@ def merge_adjudication(df: pd.DataFrame, data: Path, amap: dict) -> pd.DataFrame
             df.at[i, "gold"] = ("not_visible" if ch == "not_visible" else A if ch == "A" else B if ch == "B"
                                 else v["xy"] if ch == "new" else [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2])
             df.at[i, "reason"] = f"adjudicated:{ch}"
+    if stale:
+        print(f"warning: {stale} adjudication decisions do not match the current queue and were ignored",
+              file=sys.stderr)
     return df
 
 
@@ -196,13 +212,13 @@ def write_gold(df: pd.DataFrame, cj: dict, categories: Path, out: Path) -> None:
                 continue
             j = cat["keypoints"].index(row.kp)
             if row.gold == "not_visible":
-                kps[3 * j: 3 * j + 3] = [0.0, 0.0, 0]
+                kps[3 * j: 3 * j + 3] = [0.0, 0.0, 1]       # COCO: labelled, not visible (0 = not labelled)
                 by_dicom[row.dicom_id][cls][row.kp] = [0, 0, 0]
             else:
                 kps[3 * j: 3 * j + 3] = [float(row.gold[0]), float(row.gold[1]), 2]
                 by_dicom[row.dicom_id][cls][row.kp] = [float(row.gold[0]), float(row.gold[1]), 2]
             src[row.kp] = row.reason or "mean"
-        vis = [(kps[3 * j], kps[3 * j + 1]) for j in range(len(cat["keypoints"])) if kps[3 * j + 2] > 0]
+        vis = [(kps[3 * j], kps[3 * j + 1]) for j in range(len(cat["keypoints"])) if kps[3 * j + 2] == 2]
         bbox = ([min(p[0] for p in vis), min(p[1] for p in vis), max(p[0] for p in vis) - min(p[0] for p in vis),
                  max(p[1] for p in vis) - min(p[1] for p in vis)] if vis else [0, 0, 0, 0])
         anns.append({"id": len(anns) + 1, "image_id": int(img) + 1, "category_id": cat["id"], "keypoints": kps,
@@ -278,6 +294,10 @@ def main() -> None:
     if args.final:
         amap = json.load(open(out / "adjudication_map.json"))
         df = merge_adjudication(df, args.data, amap)
+        left = int((df.reason.str.len() > 0).sum() - df.reason.str.startswith("adjudicated:").sum())
+        if left:
+            print(f"warning: {left} landmarks still wait for adjudication and are left out of the gold files",
+                  file=sys.stderr)
     else:
         queue, amap = adjudication_queue(df)
         json.dump(queue, open(out / "adjudication_queue.json", "w"))
