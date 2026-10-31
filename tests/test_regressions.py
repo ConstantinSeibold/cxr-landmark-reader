@@ -177,3 +177,48 @@ def test_find_card_position_and_verify_is_read_only(study, client_factory):
     (data / "readers/r1/state.json").unlink()
     assert verify(data, imgs)["readers_cards_done"]["r1"] == 1
     assert not (data / "readers/r1/state.json").exists()
+
+
+def _adj_df():
+    import math
+    import pandas as pd
+    rows = []
+    for k, (a, b) in {"heart|l": ([100, 100], [110, 100]), "heart|r": ([200, 200], [230, 200])}.items():
+        rows.append(dict(card_id="c0", key=k, ltype="frontal|" + k, s=10.0, xy_a=a, xy_b=b, vis_a=True,
+                         vis_b=True, un_a=False, un_b=False, d=math.dist(a, b)))
+    return pd.DataFrame(rows)
+
+
+def _sig(l):
+    import pandas as pd
+    return pd.DataFrame([{"ltype": "frontal|heart|l", "sigma_robust": l},
+                         {"ltype": "frontal|heart|r", "sigma_robust": 0.2}])
+
+
+def test_adjudication_survives_sigma_change(tmp_path):
+    import math
+    import aggregate as A
+    factor = 3 * math.sqrt(2)
+    df = _adj_df()
+    q, _ = A.adjudication_queue(A.decide(df, _sig(0.2), factor))
+    it = q[0]
+    rec = {"item_id": it["item_id"], "card_id": "c0",
+           "keys": {k["key"]: {"choice": "A", "xy": None} for k in it["keys"]},
+           "basis": json.loads(json.dumps(it["keys"]))}
+    (tmp_path / "adjudication").mkdir()
+    (tmp_path / "adjudication" / "state.json").write_text(json.dumps({it["item_id"]: rec}))
+    # more cards read: sigma of heart|l grows, heart|l is no longer flagged, heart|r keeps its positions
+    out = A.merge_adjudication(A.decide(df, _sig(0.3), factor), tmp_path)
+    assert set(out.reason) == {"adjudicated:A"}
+    assert all(g is not None for g in out.gold)
+    # a reader moved heart|r: only that landmark is reopened
+    df2 = df.copy()
+    df2.at[1, "xy_b"] = [240, 200]
+    out = A.merge_adjudication(A.decide(df2, _sig(0.2), factor), tmp_path)
+    assert out.reason.iloc[1] != "adjudicated:A"
+    assert out.reason.iloc[0] == "adjudicated:A"
+    # decisions saved before the basis was recorded are kept
+    rec.pop("basis")
+    (tmp_path / "adjudication" / "state.json").write_text(json.dumps({it["item_id"]: rec}))
+    out = A.merge_adjudication(A.decide(df, _sig(0.2), factor), tmp_path)
+    assert set(out.reason) == {"adjudicated:A"}

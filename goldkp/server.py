@@ -336,7 +336,14 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
         """The decision for this queue item, only when it was made on the same card (a re-run of
         aggregate.py can rebuild the queue)."""
         rec = st.get(it["item_id"])
-        return rec if rec and rec.get("card_id") == it["card_id"] and rec.get("basis") == it["keys"] else None
+        if not rec or rec.get("card_id") != it["card_id"]:
+            return None
+        if "basis" not in rec:                      # saved before the basis was recorded
+            return rec
+        # per landmark, on positions only: the reasons and the flagged set move with the sigma table
+        basis = {b.get("key"): (b.get("a"), b.get("b")) for b in rec["basis"]}
+        ok = all(k["key"] in rec.get("keys", {}) and basis.get(k["key"]) == (k["a"], k["b"]) for k in it["keys"])
+        return rec if ok else None
 
     def adj_state() -> dict:
         p = adj_dir / "state.json"

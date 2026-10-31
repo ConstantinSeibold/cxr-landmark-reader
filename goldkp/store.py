@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import uuid
 from contextlib import contextmanager
@@ -11,7 +12,7 @@ from pathlib import Path
 
 try:
     import fcntl
-except ImportError:                                   # Windows: one server per study, no cross-process lock
+except ImportError:                                   # Windows: one server per study, no import-reader while it runs
     fcntl = None
 
 
@@ -44,13 +45,28 @@ def reader_lock(reader_dir: Path):
     """Exclusive lock on one reader's files across processes (server, import-reader)."""
     reader_dir.mkdir(parents=True, exist_ok=True)
     with open(reader_dir / ".lock", "a") as f:
+        locked = False
         if fcntl:
-            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX)
+                locked = True
+            except OSError:                           # e.g. a network or sync mount without flock
+                _warn_unlocked(reader_dir)
         try:
             yield
         finally:
-            if fcntl:
+            if locked:
                 fcntl.flock(f, fcntl.LOCK_UN)
+
+
+_warned: set = set()
+
+
+def _warn_unlocked(reader_dir: Path) -> None:
+    if reader_dir not in _warned:
+        _warned.add(reader_dir)
+        print(f"warning: no file lock on {reader_dir}; do not run import-reader while the server runs",
+              file=sys.stderr)
 
 
 def rebuild_state(log: Path, rid: str) -> dict:

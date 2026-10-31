@@ -145,55 +145,82 @@ def decide(df: pd.DataFrame, sig: pd.DataFrame, factor: float) -> pd.DataFrame:
     return df
 
 
+def adj_item(cid: str, seed: int = 0) -> tuple[str, str]:
+    """Queue id and which reader is shown as A, from the card alone."""
+    h = hashlib.sha256(f"{seed}|{cid}".encode()).hexdigest()
+    swap = random.Random(int(h[:8], 16)).random() < 0.5
+    return f"adj-{h[:12]}", "b" if swap else "a"
+
+
 def adjudication_queue(df: pd.DataFrame, seed: int = 0) -> tuple[list, dict]:
     queue, amap = [], {}
     for cid, g in df[df.reason != ""].groupby("card_id", sort=False):
         # id and A/B side depend on the card only, so a re-run (a reader revised a card) keeps every
         # decision already made on its card
-        h = hashlib.sha256(f"{seed}|{cid}".encode()).hexdigest()
-        swap = random.Random(int(h[:8], 16)).random() < 0.5
-        item_id = f"adj-{h[:12]}"
-        amap[item_id] = {"card_id": cid, "A": "b" if swap else "a"}
+        item_id, first = adj_item(cid, seed)
+        swap = first == "b"
+        amap[item_id] = {"card_id": cid, "A": first}
         keys = []
         for row in g.itertuples():
-            xa = row.xy_a if row.vis_a else None
-            xb = row.xy_b if row.vis_b else None
-            a, b = (xb, xa) if swap else (xa, xb)
+            a, b = display_sides(row, "b" if swap else "a")
             keys.append({"key": row.key, "reason": row.reason, "a": a, "b": b})
         queue.append({"item_id": item_id, "card_id": cid, "keys": keys})
     return queue, amap
 
 
-def merge_adjudication(df: pd.DataFrame, data: Path, amap: dict) -> pd.DataFrame:
+def display_sides(row, first: str) -> tuple:
+    """The (A, B) positions of a pairs row as the adjudicator saw them (None = not visible)."""
+    xa = row.xy_a if row.vis_a else None
+    xb = row.xy_b if row.vis_b else None
+    return (xa, xb) if first == "a" else (xb, xa)
+
+
+def basis_holds(rec: dict, key: str, ab: tuple) -> bool:
+    """A decision on one landmark counts while both readers' positions are the ones it was made on.
+    Only positions matter: the reason and which landmarks are flagged move with the sigma table.
+    Decisions saved before the basis was recorded are kept."""
+    if "basis" not in rec:
+        return True
+    b = next((k for k in rec["basis"] if k.get("key") == key), None)
+    return b is not None and _same(b.get("a"), ab[0]) and _same(b.get("b"), ab[1])
+
+
+def _same(u, v) -> bool:
+    if u is None or v is None:
+        return u is None and v is None
+    return len(u) == len(v) and all(abs(float(x) - float(y)) < 1e-9 for x, y in zip(u, v))
+
+
+def merge_adjudication(df: pd.DataFrame, data: Path) -> pd.DataFrame:
     st_path = data / "adjudication" / "state.json"
     if not st_path.exists():
         return df
     st = json.load(open(st_path))
     df = df.copy()
     idx = {(r.card_id, r.key): i for i, r in zip(df.index, df.itertuples())}
-    # a decision counts only on the positions it was made on: a reader may have revised the card
-    # after it (then the card is adjudicated again)
-    queue, amap = adjudication_queue(df)
-    items = {it["item_id"]: it for it in queue}
+    # a decision counts per landmark, only on the positions it was made on: a reader may have
+    # revised the card after it (then that landmark is adjudicated again)
     stale = 0
     for item_id, rec in st.items():
-        it = items.get(item_id)
-        if it is None or it["card_id"] != rec.get("card_id") or rec.get("basis") != it["keys"]:
+        expect, first = adj_item(rec.get("card_id", ""))
+        if item_id != expect:
             stale += 1
             continue
-        first = amap[item_id]["A"]
         for key, v in rec["keys"].items():
             i = idx.get((rec["card_id"], key))
             if i is None:
                 continue
             row = df.loc[i]
+            if not basis_holds(rec, key, display_sides(row, first)):
+                stale += 1
+                continue
             A, B = (row.xy_a, row.xy_b) if first == "a" else (row.xy_b, row.xy_a)
             ch = v["choice"]
             df.at[i, "gold"] = ("not_visible" if ch == "not_visible" else A if ch == "A" else B if ch == "B"
                                 else v["xy"] if ch == "new" else [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2])
             df.at[i, "reason"] = f"adjudicated:{ch}"
     if stale:
-        print(f"warning: {stale} adjudication decisions do not match the current queue and were ignored",
+        print(f"warning: {stale} adjudicated landmarks changed since their decision and were ignored",
               file=sys.stderr)
     return df
 
@@ -296,8 +323,7 @@ def main() -> None:
     sig.to_csv(out / "sigma_table.csv", index=False)
     df = decide(df, sig, args.factor)
     if args.final:
-        amap = json.load(open(out / "adjudication_map.json"))
-        df = merge_adjudication(df, args.data, amap)
+        df = merge_adjudication(df, args.data)
         left = int((df.reason.str.len() > 0).sum() - df.reason.str.startswith("adjudicated:").sum())
         if left:
             print(f"warning: {left} landmarks still wait for adjudication and are left out of the gold files",
