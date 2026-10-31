@@ -125,6 +125,8 @@ Use a separate reader id (e.g. `--readers pilot`) for a pilot so it never mixes 
 - **Navigation:** card number box (type a number, Enter) and the `go to…` menu (first card of every
   group with progress, first scratch card) in the header; Back / Submit pinned at the bottom of
   the side panel. Undo / redo sit at the start of the toolbar above the image.
+- **Zoom:** mouse wheel or trackpad pinch zooms at the cursor, `+` / `-` and the buttons bottom right
+  on the image too; drag empty image or Alt + arrow keys to pan; `z` goes back to the card's view.
 - **Ruler** (`l`): drag on the image for a length in cm. Screen only, never saved. **Approximate:**
   the study JPGs carry no pixel spacing, so 0.139 mm per pixel is assumed (`--pixel-spacing`, or a
   `pixel_spacing` per image in `cards.json`), and chest films magnify (AP more than PA).

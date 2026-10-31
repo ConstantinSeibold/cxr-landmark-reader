@@ -44,8 +44,11 @@ header .grow { flex: 1; }
 #rulerWarn { position: absolute; left: 8px; top: 8px; max-width: calc(100% - 16px); padding: 4px 10px; border-radius: 6px;
              background: rgba(0,0,0,.8); color: #ffb703; border: 1px solid #ffb703; font-size: 12px; font-weight: 600; pointer-events: none; }
 #view.ruler { cursor: copy; }
+#zoomCtl { position: absolute; right: 8px; bottom: 8px; display: flex; flex-direction: column; gap: 4px; }
+#zoomCtl button { width: 32px; height: 32px; font-size: 18px; background: rgba(31,36,42,.9); }
+#view.panning { cursor: grabbing; }
 #btnRuler { display: inline-flex; align-items: center; gap: 5px; }
-#maskLegend { position: absolute; left: 8px; right: 8px; bottom: 8px; display: flex; flex-wrap: wrap; gap: 6px; pointer-events: none; }
+#maskLegend { position: absolute; left: 8px; right: 52px; bottom: 8px; display: flex; flex-wrap: wrap; gap: 6px; pointer-events: none; }
 #maskLegend .chip { font-size: 12px; padding: 1px 8px; border: 2px solid; border-radius: 10px; background: rgba(0,0,0,.78); }
 #maskLegend .chip.rule { border-style: dashed; }
 

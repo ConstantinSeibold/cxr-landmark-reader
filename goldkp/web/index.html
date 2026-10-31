@@ -58,6 +58,11 @@
           <canvas id="view" width="720" height="720"></canvas>
           <div id="banner"></div>
           <div id="rulerWarn" hidden role="note"></div>
+          <div id="zoomCtl">
+            <button id="zoomIn" class="icon" title="Zoom in (+, mouse wheel)" aria-label="Zoom in">+</button>
+            <button id="zoomOut" class="icon" title="Zoom out (-)" aria-label="Zoom out">−</button>
+            <button id="zoomFit" class="icon" title="Back to the card's view (z)" aria-label="Fit"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M3 3h6v2H5v4H3zm12 0h6v6h-2V5h-4zM3 15h2v4h4v2H3zm16 0h2v6h-6v-2h4z"/></svg></button>
+          </div>
           <div id="maskLegend" hidden></div>
         </div>
       </div>
@@ -135,6 +140,9 @@
       <tr><td>m</td><td>structure outlines (solid: own structure, dashed: structure the rule reads)</td></tr>
       <tr><td>c</td><td>switch zoomed crop / whole image (cards with a zoomed view)</td></tr>
       <tr><td>h (hold)</td><td>hide the points</td></tr>
+      <tr><td>wheel / pinch, + / -</td><td>zoom in / out at the cursor</td></tr>
+      <tr><td>drag empty image, Alt + ← → ↑ ↓</td><td>pan the zoomed image</td></tr>
+      <tr><td>z</td><td>back to the card's view</td></tr>
       <tr><td>l</td><td>ruler on / off: drag to measure (approximate, not for decisions)</td></tr>
       <tr><td>[ / ]</td><td>brightness down / up</td></tr>
       <tr><td>{ / }</td><td>contrast down / up</td></tr>

@@ -10,10 +10,13 @@ const post = (u, b) => fetch(u, { method: "POST", headers: { "Content-Type": "ap
 const S = {
   mode: "read", rid: null, pos: 0, total: 0, card: null, pts: [], sel: 0,
   img: null, outlines: null, showMasks: false, hide: false, full: false, hist: [], redo: [],
-  drag: null, ruler: false, line: null, activeMs: 0, lastInput: Date.now(), nEvents: 0, refKind: "main",
+  drag: null, pan: null, zoomBox: null, ruler: false, line: null, activeMs: 0, lastInput: Date.now(), nEvents: 0, refKind: "main",
   view: { x0: 0, y0: 0, x1: 512, y1: 512, sx: 1, sy: 1 },
 };
 const VIEW_MIN = 320, THUMB_W = 96, HIT = 10, DRAG_MIN = 2, MAX_GAIN = 2.5;
+// zoom: smallest view side in the 512 frame (about 20x the whole image); a press that moves less
+// than PAN_MIN screen pixels is a click (places a point), more is a pan
+const ZOOM_MIN_SIDE = 24, PAN_MIN = 4;
 
 // ---------------- start ----------------
 async function start() {
@@ -53,7 +56,7 @@ async function load(pos) {
   S.pts = S.mode === "adjudicate" ? adjPoints(c) : c.points.map((p) => ({ ...p, n_edits: 0 }));
   S.sel = Math.max(0, S.pts.findIndex((p) => p.status === "missing"));
   S.img = await loadImage(`/api/img/${c.img}`);
-  S.hist = []; S.redo = []; S.line = null;
+  S.hist = []; S.redo = []; S.line = null; S.zoomBox = null;
   S.outlines = null;
   if (S.showMasks && S.mode !== "adjudicate") S.outlines = await api(`/api/r/${S.rid}/card/${pos}/outlines`);
   renderLegend();
@@ -104,7 +107,9 @@ async function updateProgress() {
 // ---------------- geometry ----------------
 function layout() {
   const c = S.card;
-  const [x0, y0, x1, y1] = S.full ? [0, 0, 512, 512] : squareBox(c.box);
+  // a custom zoom (wheel, +/-) replaces the card's view box; every box is square in the 512 frame,
+  // so the canvas size does not change with the zoom
+  const [x0, y0, x1, y1] = S.zoomBox || (S.full ? [0, 0, 512, 512] : squareBox(c.box));
   // the 512 px image is squashed from the original; stretch y back to the original aspect
   const ar = c.orig_wh ? c.orig_wh[1] / c.orig_wh[0] : 1;
   // fit the view into the free stage, keeping the aspect
@@ -462,24 +467,42 @@ function onDown(e) {
     S.drag = { i: hit, from: p.xy.slice(), status: p.status, moved: false, dx: px - qx, dy: py - qy, sx: px, sy: py };
     $("#view").setPointerCapture(e.pointerId);
   } else {
-    const p = S.pts[S.sel];
-    if (p && S.mode !== "adjudicate" && (p.status === "missing" || p.status === "not_visible")) {
-      snapshot();
-      p.xy = toImage(px, py).map(clamp512);
-      p.status = p.prefill ? "moved" : "added";
-      p.n_edits++; S.nEvents++;
-      nextUnresolved();
-    } else if (p && S.mode === "adjudicate" && p.choice === "new") {
-      snapshot();
-      p.xy = toImage(px, py).map(clamp512);
-      S.nEvents++;
-    }
+    // a press on empty image: a pan if it moves, else a click (see onUp)
+    S.pan = { sx: px, sy: py, box: [S.view.x0, S.view.y0, S.view.x1 - S.view.x0], moved: false };
+    $("#view").setPointerCapture(e.pointerId);
+    return;
+  }
+  renderList(); draw();
+}
+
+// a click on empty image: place the selected point when it is missing
+function clickAt(px, py) {
+  const p = S.pts[S.sel];
+  if (p && S.mode !== "adjudicate" && (p.status === "missing" || p.status === "not_visible")) {
+    snapshot();
+    p.xy = toImage(px, py).map(clamp512);
+    p.status = p.prefill ? "moved" : "added";
+    p.n_edits++; S.nEvents++;
+    nextUnresolved();
+  } else if (p && S.mode === "adjudicate" && p.choice === "new") {
+    snapshot();
+    p.xy = toImage(px, py).map(clamp512);
+    S.nEvents++;
   }
   renderList(); draw();
 }
 
 function onMove(e) {
   if (S.line && S.line.live) { S.line.b = toImage(...canvasPos(e)).map(clamp512); draw(); return; }
+  if (S.pan) {
+    const [px, py] = canvasPos(e);
+    if (!S.pan.moved && Math.hypot(px - S.pan.sx, py - S.pan.sy) < PAN_MIN) return;
+    S.pan.moved = true;
+    $("#view").classList.add("panning");
+    const [x0, y0, side] = S.pan.box;
+    setBox(x0 - (px - S.pan.sx) / S.view.sx, y0 - (py - S.pan.sy) / S.view.sy, side);
+    return;
+  }
   if (!S.drag) return;
   const p = S.pts[S.drag.i];
   const [px, py] = canvasPos(e);
@@ -492,6 +515,13 @@ function onMove(e) {
 }
 
 function onUp() {
+  if (S.pan) {
+    const { moved, sx, sy } = S.pan;
+    S.pan = null;
+    $("#view").classList.remove("panning");
+    if (!moved) clickAt(sx, sy);
+    return;
+  }
   if (S.line && S.line.live) {
     S.line.live = false;
     if (S.line.a[0] === S.line.b[0] && S.line.a[1] === S.line.b[1]) S.line = null;      // a click clears the line
@@ -537,7 +567,38 @@ async function toggleMasks() {
   draw();
 }
 
-function toggleFull() { if (S.card.full) return; S.full = !S.full; layout(); draw(); }
+function toggleFull() { if (S.card.full) return; S.full = !S.full; S.zoomBox = null; layout(); draw(); }
+
+// ---------------- zoom and pan ----------------
+// after Google Maps: the wheel (or a trackpad pinch) zooms at the cursor, dragging the image pans,
+// +/- and fit sit bottom right on the image
+function setBox(x0, y0, side) {
+  side = Math.min(512, Math.max(ZOOM_MIN_SIDE, side));
+  x0 = Math.min(Math.max(0, x0), 512 - side); y0 = Math.min(Math.max(0, y0), 512 - side);
+  S.zoomBox = [x0, y0, x0 + side, y0 + side];
+  const cv = $("#view");
+  S.view = { x0, y0, x1: x0 + side, y1: y0 + side, sx: cv.width / side, sy: cv.height / side };
+  draw();
+}
+
+// zoom by factor f (> 1 in) keeping the image point under (px, py) in place
+function zoomAt(f, px, py) {
+  if (!S.card) return;
+  const v = S.view, side = v.x1 - v.x0, ns = Math.min(512, Math.max(ZOOM_MIN_SIDE, side / f));
+  const [ix, iy] = toImage(px, py);
+  setBox(ix - (px / $("#view").width) * ns, iy - (py / $("#view").height) * ns, ns);
+}
+const zoomCentre = (f) => zoomAt(f, $("#view").width / 2, $("#view").height / 2);
+function zoomFit() { S.zoomBox = null; layout(); draw(); }
+
+function onWheel(e) {
+  e.preventDefault();
+  touch();
+  // a trackpad pinch arrives as a wheel event with ctrlKey and small deltas
+  const k = e.ctrlKey ? 0.01 : 0.0015;
+  const [px, py] = canvasPos(e);
+  zoomAt(Math.exp(-e.deltaY * k), px, py);
+}
 
 async function submit() {
   if (!complete()) { $("#msg").textContent = "Resolve every landmark first (place it or mark it not visible)."; return; }
@@ -613,6 +674,10 @@ function wire() {
   cv.addEventListener("pointerdown", onDown);
   cv.addEventListener("pointermove", onMove);
   cv.addEventListener("pointerup", onUp);
+  cv.addEventListener("wheel", onWheel, { passive: false });
+  $("#zoomIn").onclick = () => zoomCentre(1.5);
+  $("#zoomOut").onclick = () => zoomCentre(1 / 1.5);
+  $("#zoomFit").onclick = zoomFit;
   $("#btnSubmit").onclick = submit;
   $("#btnPrev").onclick = () => S.pos > 0 && load(S.pos - 1);
   $("#btnCrop").onclick = toggleFull;
@@ -665,6 +730,13 @@ function wire() {
     if ((e.ctrlKey || e.metaKey) && (k.toLowerCase() === "y" || (k.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); redo(); return; }
     if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "z") { e.preventDefault(); undo(); return; }
     if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "s") { e.preventDefault(); if (S.mode !== "adjudicate") exportNow(); return; }
+    if (e.altKey && k.startsWith("Arrow")) {             // pan by a fifth of the view
+      e.preventDefault();
+      const v = S.view, step = (v.x1 - v.x0) / 5;
+      setBox(v.x0 + (k === "ArrowLeft" ? -step : k === "ArrowRight" ? step : 0),
+             v.y0 + (k === "ArrowUp" ? -step : k === "ArrowDown" ? step : 0), v.x1 - v.x0);
+      return;
+    }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (k.startsWith("Arrow")) {
       e.preventDefault();
@@ -683,6 +755,9 @@ function wire() {
     else if (k === "m") toggleMasks();
     else if (k === "c") toggleFull();
     else if (k === "l") setRuler(!S.ruler);
+    else if (k === "+" || k === "=") zoomCentre(1.5);
+    else if (k === "-") zoomCentre(1 / 1.5);
+    else if (k === "z") zoomFit();
     else if (k === "1") setRef("main");
     else if (k === "2" && S.card.refs.series) setRef("series");
     else if (k === "h" && !S.hide) { S.hide = true; draw(); }
