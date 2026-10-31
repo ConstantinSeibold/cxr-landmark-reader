@@ -207,29 +207,27 @@ async function updateProgress() {
     return;
   }
   const s = await api(`/api/r/${S.rid}/session`);
-  $("#progressBar").style.width = `${(100 * s.done) / s.total}%`;
+  // with a goal (the 10-hour plan), the bar and the count show only the goal
+  const p = s.goal || s;
+  $("#progressBar").style.width = `${(100 * p.done) / Math.max(1, p.total)}%`;
   const g = (S.card.block && s.per_block_group[`${S.card.block}|${S.card.gid}`]) || s.per_group[S.card.gid];
   $("#groupProgress").textContent = `${g.done} / ${g.total} done in this group`;
-  $("#totalProgress").textContent = `${s.done} / ${s.total} done`;
+  $("#totalProgress").textContent = `${p.done} / ${p.total}`;
+  $("#totalProgress").title = s.goal ? "10-hour goal: shared images of the first 12 groups" : "Cards done";
 }
 
 // ---------------- geometry ----------------
 function layout() {
   const c = S.card;
-  // a custom zoom (wheel, +/-) replaces the card's view box; every box is square in the 512 frame,
-  // so the canvas size does not change with the zoom
+  // the canvas fills the whole free stage; the view keeps the card's box (or the custom zoom) in
+  // full and widens it to the stage's shape, so the extra room shows more of the image
+  const st = $("#stage"), cv = $("#view");
+  cv.width = Math.max(VIEW_MIN, st.clientWidth); cv.height = Math.max(VIEW_MIN, st.clientHeight);
   const [x0, y0, x1, y1] = S.zoomBox || (S.full ? [0, 0, 512, 512] : squareBox(c.box));
-  // the 512 px image is squashed from the original; stretch y back to the original aspect
-  const ar = c.orig_wh ? c.orig_wh[1] / c.orig_wh[0] : 1;
-  // fit the view into the free stage, keeping the aspect
-  const st = $("#stage"), maxW = Math.max(VIEW_MIN, st.clientWidth), maxH = Math.max(VIEW_MIN, st.clientHeight - 12);
-  const aspect = (ar * (y1 - y0)) / (x1 - x0);
-  let w = maxW, h = maxW * aspect;
-  if (h > maxH) { w = maxH / aspect; h = maxH; }
-  const cv = $("#view");
-  cv.width = Math.round(w); cv.height = Math.round(h);
-  S.view = { x0, y0, x1, y1, sx: cv.width / (x1 - x0), sy: cv.height / (y1 - y0) };
-  S.window = S.full ? "" : autoWindow();
+  const q = viewRatio(), wx = Math.max(x1 - x0, (y1 - y0) / q);
+  placeView((x0 + x1) / 2 - wx / 2, (y0 + y1) / 2 - (wx * q) / 2, wx);
+  const ar = imgRatio();
+  S.window = S.full ? "" : autoWindow([x0, y0, x1, y1]);   // measured on the card's own box
   // the button shows the current view; cards without a zoomed view (the whole image is the crop) disable it
   const b = $("#btnCrop");
   b.disabled = c.full;
@@ -250,11 +248,13 @@ function squareBox([x0, y0, x1, y1]) {
 // do on load: a crop of a bright region (upper abdomen under the diaphragm) otherwise shows as white.
 // brightness(b) then contrast(c) maps v to (v*b - .5)*c + .5; with b = 1/(2 mid) and c = 2 gain mid
 // that is gain * (v - mid) + .5, so the window centre lands on mid grey
-function autoWindow() {
-  const v = S.view, n = 64, cv = document.createElement("canvas");
+function autoWindow(box) {
+  const n = 64, cv = document.createElement("canvas");
   cv.width = cv.height = n;
   const ctx = cv.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(S.img, v.x0, v.y0, v.x1 - v.x0, v.y1 - v.y0, 0, 0, n, n);
+  // only the part of the box inside the image
+  const a = Math.max(0, box[0]), b = Math.max(0, box[1]), w = Math.min(512, box[2]) - a, h = Math.min(512, box[3]) - b;
+  ctx.drawImage(S.img, a, b, w, h, 0, 0, n, n);
   const px = ctx.getImageData(0, 0, n, n).data, lum = [];
   for (let i = 0; i < px.length; i += 4) lum.push((px[i] + px[i + 1] + px[i + 2]) / 765);
   lum.sort((a, b) => a - b);
@@ -263,6 +263,20 @@ function autoWindow() {
   // at most MAX_GAIN: a near-saturated crop holds only a few grey levels and turns into JPEG blocks
   const gain = Math.min(1 / Math.max(hi - lo, 1e-3), MAX_GAIN);
   return `brightness(${1 / (2 * mid)}) contrast(${2 * gain * mid})`;
+}
+// the 512 px image is squashed from the original; y is stretched back to the original aspect
+const imgRatio = () => (S.card && S.card.orig_wh ? S.card.orig_wh[1] / S.card.orig_wh[0] : 1);
+// view height per view width in the 512 frame, so that the canvas shows the original aspect
+const viewRatio = () => $("#view").height / ($("#view").width * imgRatio());
+// the view at (x0, y0), wx wide: at most the whole image plus margins, centred where it is wider
+// than the image, else kept inside it
+function placeView(x0, y0, wx) {
+  const cv = $("#view"), q = viewRatio();
+  wx = Math.min(Math.max(512, 512 / q), Math.max(ZOOM_MIN_SIDE, wx));
+  const wy = wx * q;
+  const clampTo = (a, w) => (w >= 512 ? 256 - w / 2 : Math.min(Math.max(0, a), 512 - w));
+  x0 = clampTo(x0, wx); y0 = clampTo(y0, wy);
+  S.view = { x0, y0, x1: x0 + wx, y1: y0 + wy, sx: cv.width / wx, sy: cv.height / wy };
 }
 const toCanvas = (x, y) => [(x - S.view.x0) * S.view.sx, (y - S.view.y0) * S.view.sy];
 const toImage = (px, py) => [S.view.x0 + px / S.view.sx, S.view.y0 + py / S.view.sy];
@@ -274,7 +288,7 @@ function draw() {
   ctx.clearRect(0, 0, cv.width, cv.height);
   ctx.filter = `${S.window} brightness(${$("#bright").value}%) contrast(${$("#contrast").value}%)`;
   ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(S.img, v.x0, v.y0, v.x1 - v.x0, v.y1 - v.y0, 0, 0, cv.width, cv.height);
+  ctx.drawImage(S.img, 0, 0, 512, 512, -v.x0 * v.sx, -v.y0 * v.sy, 512 * v.sx, 512 * v.sy);   // views may reach past the image
   ctx.filter = "none";
   if (S.showMasks && S.outlines) drawOutlines(ctx);
   if (!S.hide) {
@@ -702,21 +716,20 @@ function toggleFull() { if (S.card.full) return; S.full = !S.full; S.zoomBox = n
 // ---------------- zoom and pan ----------------
 // after Google Maps: the wheel (or a trackpad pinch) zooms at the cursor, dragging the image pans,
 // +/- and fit sit bottom right on the image
+// side: the view's width in the 512 frame; its height follows the canvas shape
 function setBox(x0, y0, side) {
-  side = Math.min(512, Math.max(ZOOM_MIN_SIDE, side));
-  x0 = Math.min(Math.max(0, x0), 512 - side); y0 = Math.min(Math.max(0, y0), 512 - side);
-  S.zoomBox = [x0, y0, x0 + side, y0 + side];
-  const cv = $("#view");
-  S.view = { x0, y0, x1: x0 + side, y1: y0 + side, sx: cv.width / side, sy: cv.height / side };
+  placeView(x0, y0, side);
+  S.zoomBox = [S.view.x0, S.view.y0, S.view.x1, S.view.y1];
   draw();
 }
 
 // zoom by factor f (> 1 in) keeping the image point under (px, py) in place
 function zoomAt(f, px, py) {
   if (!S.card) return;
-  const v = S.view, side = v.x1 - v.x0, ns = Math.min(512, Math.max(ZOOM_MIN_SIDE, side / f));
+  const v = S.view, q = viewRatio();
+  const ns = Math.min(Math.max(512, 512 / q), Math.max(ZOOM_MIN_SIDE, (v.x1 - v.x0) / f));
   const [ix, iy] = toImage(px, py);
-  setBox(ix - (px / $("#view").width) * ns, iy - (py / $("#view").height) * ns, ns);
+  setBox(ix - (px / $("#view").width) * ns, iy - (py / $("#view").height) * ns * q, ns);
 }
 const zoomCentre = (f) => zoomAt(f, $("#view").width / 2, $("#view").height / 2);
 function zoomFit() { S.zoomBox = null; layout(); draw(); }

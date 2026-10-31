@@ -97,7 +97,7 @@ header .grow { flex: 1; }
 #progressBar { height: 100%; width: 0; background: var(--accent); transition: width .25s; }
 
 #work { display: flex; flex: 1; min-height: 0; }
-#left { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; padding: 12px 16px 16px; }
+#left { flex: 1; min-width: 0; display: flex; flex-direction: column; background: #000; }
 
 /* toolbar in the header, centred between the left and right groups */
 #toolbar { display: flex; align-items: center; gap: 2px; flex: none; }
@@ -105,8 +105,9 @@ header .grow { flex: 1; }
 #toolbar .slider { display: flex; align-items: center; gap: 6px; color: var(--muted); padding: 0 6px; }
 
 #stage { flex: 1; min-height: 0; width: 100%; }
-#canvasWrap { position: relative; width: max-content; margin: 0 auto; }
-#view { background: #000; border-radius: var(--radius); cursor: crosshair; display: block; touch-action: none; }
+#canvasWrap { position: relative; width: 100%; height: 100%; }
+#stage { overflow: hidden; }
+#view { background: #000; cursor: crosshair; display: block; touch-action: none; }
 #view.ruler { cursor: copy; }
 #view.panning { cursor: grabbing; }
 

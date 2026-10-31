@@ -23,6 +23,9 @@ PRIORITY_LAST = ["G19", "G20", "G21", "G25", "G26"]
 DEFAULT_SUBSET = {"frontal": 30, "lateral": 20}
 DEFAULT_GROUP_ORDER = ["G13", "G12", "G15", "G14", "G04", "G09", "G07", "G24", "G17", "G18", "G05", "G01",
                        "G02", "G03", "G22", "G10", "G11", "G08", "G06", "G16", "G19", "G20", "G21", "G25", "G26"]
+# the 10-hour goal of the study plan: the shared images of the first 12 groups in the order above
+# (15 min read-in per group and view, 40 s per card), 480 cards per reader
+DEFAULT_GOAL_GROUPS = DEFAULT_GROUP_ORDER[:12]
 
 
 def _vert_level(cls: str) -> tuple[str, int] | None:

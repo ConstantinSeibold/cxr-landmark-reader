@@ -23,7 +23,7 @@ from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from PIL import Image
 
-from .cards import DEFAULT_GROUP_ORDER, DEFAULT_SUBSET, image_blocks, reader_order, rule_partners, shared_subset
+from .cards import DEFAULT_GOAL_GROUPS, DEFAULT_GROUP_ORDER, DEFAULT_SUBSET, image_blocks, reader_order, rule_partners, shared_subset
 from .export import export_reader
 from .store import ReaderStore, VersionMismatch, write_json_atomic
 
@@ -85,6 +85,9 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
     block_of = {im: n for n, b in enumerate(image_blocks(cards, blocks), 1) for im in b} if blocks else {}
     if shared and not blocks:
         block_of = {c["img"]: 1 if c["img"] in shared else 2 for c in cards}
+    # the progress goal: shared images of the goal groups (only with a shared subset)
+    goal_groups = set(DEFAULT_GOAL_GROUPS)
+    goal_cards = [c["id"] for c in cards if shared and c["img"] in shared and c["gid"] in goal_groups]
     def scale(img_idx: int) -> dict:
         """mm per original pixel for the ruler: the image's own value when cards.json has one,
         else the assumed default (the study JPGs carry no pixel spacing)."""
@@ -198,8 +201,10 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
         first_open = next((p for p, i in enumerate(orders[rid]) if st.latest(cards[i]["id"]) is None),
                           len(cards))
         done = sum(1 for i in orders[rid] if st.latest(cards[i]["id"]) is not None)
+        goal = ({"total": len(goal_cards), "done": sum(1 for cid in goal_cards if st.latest(cid) is not None)}
+                if goal_cards else None)
         return {"total": len(cards), "done": done, "cursor": first_open, "per_group": per_group,
-                "per_block_group": per_block_group,
+                "per_block_group": per_block_group, "goal": goal,
                 "cards_sha": sha, "prefill_version": prefill_version}
 
     @app.get("/api/r/{rid}/cards")
