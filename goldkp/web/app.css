@@ -34,7 +34,7 @@ header .grow { flex: 1; }
 #toolbar .tgroup { display: flex; gap: 4px; align-items: center; }
 #toolbar .tgroup + .tgroup { padding-left: 14px; border-left: 1px solid var(--line); }
 #toolbar label { color: var(--muted); font-size: 13px; display: flex; gap: 4px; align-items: center; }
-#toolbar input[type=range] { width: 90px; }
+#toolbar input[type=range] { width: 160px; }
 #stage { flex: 1; min-height: 0; padding-bottom: 12px; }
 #canvasWrap { position: relative; width: max-content; margin: 0 auto; }
 #view { background: #000; border-radius: 4px; cursor: crosshair; display: block; touch-action: none; }
