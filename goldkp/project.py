@@ -27,7 +27,7 @@ import time
 import zipfile
 from pathlib import Path
 
-from .store import ReaderStore, VersionMismatch
+from .store import ReaderStore, load_state, reader_lock
 
 MANIFEST = "project_manifest.json"
 NOTICE = ("This bundle contains image identifiers and landmark coordinates derived from the images. "
@@ -92,6 +92,11 @@ def import_reader(data: Path, source: Path, rid: str, as_rid: str | None = None)
     if unknown:
         raise SystemExit(f"{len(unknown)} records refer to cards not in this study")
     log = data / "readers" / target / "decisions.jsonl"
+    with reader_lock(log.parent):                  # a running server waits; nothing it writes is lost
+        return _merge_into(data, cj, log, target, recs)
+
+
+def _merge_into(data: Path, cj: dict, log: Path, target: str, recs: list[dict]) -> dict:
     existing = read_records(log, target) if log.exists() else []      # skips a line torn by a crash
     seen = {(r["card_id"], r.get("ts")) for r in existing}
     new = [dict(r, rid=target) for r in recs if (r["card_id"], r.get("ts")) not in seen]
@@ -122,7 +127,7 @@ def study_files(data: Path, with_readers: bool) -> list[Path]:
     for r in roots:
         if r.exists():
             files += [f for f in sorted(r.rglob("*")) if f.is_file() and not f.name.endswith(".tmp")
-                      and not f.name.startswith("decisions.before_import_")]
+                      and not f.name.startswith("decisions.before_import_") and f.name != ".lock"]
     return files
 
 
@@ -152,16 +157,15 @@ def pack(data: Path, images: Path, out: Path, with_images: bool = False, with_re
 def unpack(zpath: Path, to: Path, images: Path | None = None) -> dict:
     if to.exists() and any(to.iterdir()):
         raise SystemExit(f"{to} is not empty; unpack into a new folder")
-    to.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zpath) as z:
         for name in z.namelist():
             if name.startswith("/") or ".." in Path(name).parts:
                 raise SystemExit(f"unsafe path in bundle: {name}")
+        manifest, cj = json.loads(z.read(MANIFEST)), json.loads(z.read("cards.json"))
+        if (manifest.get("cards_sha"), manifest.get("prefill_version")) != (cj["sha"], cj["prefill_version"]):
+            raise SystemExit("bundle is inconsistent: cards.json does not match its manifest")
+        to.mkdir(parents=True, exist_ok=True)
         z.extractall(to)
-    manifest = json.load(open(to / MANIFEST))
-    cj = json.load(open(to / "cards.json"))
-    if (manifest.get("cards_sha"), manifest.get("prefill_version")) != (cj["sha"], cj["prefill_version"]):
-        raise SystemExit("bundle is inconsistent: cards.json does not match its manifest")
     if images is None:
         if not manifest.get("images_included"):
             raise SystemExit("this bundle has no images: pass --images with the local image root")
@@ -177,10 +181,10 @@ def verify(data: Path, images: Path) -> dict:
     cj = json.load(open(data / "cards.json"))
     readers = {}
     for d in sorted((data / "readers").glob("*")) if (data / "readers").exists() else []:
-        try:
-            readers[d.name] = ReaderStore(data / "readers", d.name, cj["sha"], cj["prefill_version"]).done
-        except VersionMismatch as e:
-            readers[d.name] = f"version mismatch: {e}"
+        st = load_state(d)                         # read only: verify writes nothing into the study
+        made_on = (st.get("cards_sha"), st.get("prefill_version"))
+        readers[d.name] = (f"version mismatch: made on {made_on}" if st["latest"]
+                           and made_on != (cj["sha"], cj["prefill_version"]) else len(st["latest"]))
     return {"images": chk["n"], "missing": chk["missing"], "changed": chk["changed"],
             "checksums_checked": mpath.exists(), "readers_cards_done": readers, "cards_total": len(cj["cards"])}
 

@@ -14,6 +14,7 @@ import functools
 import io
 import json
 import math
+import threading
 import time
 from pathlib import Path
 
@@ -149,15 +150,29 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
             raise HTTPException(404, "no such card")
         return cards[order[pos]]
 
+    # no-cache: the browser revalidates the page and its scripts, so an update is picked up on reload
+    NO_CACHE = {"Cache-Control": "no-cache"}
+
     @app.get("/", response_class=HTMLResponse)
     def index():
-        return (WEB / "index.html").read_text()
+        return HTMLResponse((WEB / "index.html").read_text(), headers=NO_CACHE)
 
     @app.get("/static/{name}")
     def static(name: str):
         if name not in {"app.js", "app.css"}:
             raise HTTPException(404)
-        return FileResponse(WEB / name, media_type="text/javascript" if name.endswith(".js") else "text/css")
+        return FileResponse(WEB / name, media_type="text/javascript" if name.endswith(".js") else "text/css",
+                            headers=NO_CACHE)
+
+    pos_of = {r: {cards[i]["id"]: p for p, i in enumerate(o)} for r, o in orders.items()}
+
+    @app.get("/api/r/{rid}/find")
+    def find(rid: str, card_id: str):
+        """Position of a card in this reader's order (resume on the same card after an order change)."""
+        store_of(rid)
+        if card_id not in pos_of[rid]:
+            raise HTTPException(404, "no such card")
+        return {"pos": pos_of[rid][card_id]}
 
     @app.get("/api/config")
     def config():
@@ -315,11 +330,13 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
             raise HTTPException(404)
         return json.load(open(queue_path)) if queue_path.exists() else []
 
+    adj_lock = threading.Lock()
+
     def resolved_rec(st: dict, it: dict) -> dict | None:
         """The decision for this queue item, only when it was made on the same card (a re-run of
         aggregate.py can rebuild the queue)."""
         rec = st.get(it["item_id"])
-        return rec if rec and rec.get("card_id") == it["card_id"] else None
+        return rec if rec and rec.get("card_id") == it["card_id"] and rec.get("basis") == it["keys"] else None
 
     def adj_state() -> dict:
         p = adj_dir / "state.json"
@@ -376,13 +393,17 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
             if ch == "new" and not _xy(v.get("xy")):
                 raise HTTPException(422, f"new position missing or outside the image for {k}")
             res[k] = {"choice": ch, "xy": v.get("xy") if ch == "new" else None}
-        rec = {"ts": time.time(), "item_id": it["item_id"], "card_id": it["card_id"], "keys": res}
-        adj_dir.mkdir(parents=True, exist_ok=True)
-        with open(adj_dir / "decisions.jsonl", "a") as f:
-            f.write(json.dumps(rec) + "\n")
-        st = adj_state()
-        st[it["item_id"]] = rec
-        write_json_atomic(adj_dir / "state.json", st)
+        # basis: the positions the decision was made on; a re-run of aggregate.py that changes them
+        # (a reader revised the card) reopens the item
+        rec = {"ts": time.time(), "item_id": it["item_id"], "card_id": it["card_id"], "keys": res,
+               "basis": it["keys"]}
+        with adj_lock:
+            adj_dir.mkdir(parents=True, exist_ok=True)
+            with open(adj_dir / "decisions.jsonl", "a") as f:
+                f.write(json.dumps(rec) + "\n")
+            st = adj_state()
+            st[it["item_id"]] = rec
+            write_json_atomic(adj_dir / "state.json", st)
         return {"ok": True, "next": min(i + 1, len(q) - 1)}
 
     return app

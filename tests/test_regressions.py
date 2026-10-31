@@ -134,3 +134,46 @@ def test_pack_leaves_out_import_backups(study, client_factory):
     c.post("/api/r/r1/card/0/submit", json=answer(c.get("/api/r/r1/card/0").json()))
     (data / "readers/r1/decisions.before_import_20260101-000000.jsonl").write_text("")
     assert not any("before_import" in f.name for f in study_files(data, True))
+
+
+def test_replaced_log_of_the_same_size_is_noticed(study, client_factory):
+    from goldkp.store import ReaderStore
+    data, imgs = study
+    c = client_factory(data, imgs)
+    c.post("/api/r/r1/card/0/submit", json=answer(c.get("/api/r/r1/card/0").json()))
+    log = data / "readers/r1/decisions.jsonl"
+    rec = json.loads(log.read_text())
+    st = ReaderStore(data / "readers", "r1", rec["cards_sha"], rec["prefill_version"])
+    other = dict(rec, card_id=rec["card_id"][:-1] + "X")                  # same length, other card
+    tmp = log.with_suffix(".new")
+    tmp.write_text(json.dumps(other) + "\n")
+    tmp.replace(log)                                                      # as import-reader does
+    st.sync()
+    assert set(st.state["latest"]) == {other["card_id"]}
+
+
+def test_adjudication_reopens_when_the_positions_change(tmp_path, client_factory):
+    adj = _adjudication(tmp_path, client_factory)
+    item = adj.get("/api/adj/item/0").json()
+    keys = {k["key"]: {"choice": "A"} for k in item["keys"]}
+    assert adj.post("/api/adj/item/0/resolve", json={"item_id": item["item_id"], "keys": keys}).status_code == 200
+    assert adj.get("/api/adj/session").json()["done"] == 1
+    data = tmp_path / "data"
+    qpath = next(data.rglob("adjudication_queue.json"))
+    q = json.loads(qpath.read_text())
+    q[0]["keys"][0]["a"] = [q[0]["keys"][0]["a"][0] + 5, q[0]["keys"][0]["a"][1]]   # a reader revised it
+    qpath.write_text(json.dumps(q))
+    assert adj.get("/api/adj/session").json()["done"] == 0
+
+
+def test_find_card_position_and_verify_is_read_only(study, client_factory):
+    from goldkp.project import verify
+    data, imgs = study
+    c = client_factory(data, imgs)
+    card = c.get("/api/r/r1/card/2").json()
+    assert c.get("/api/r/r1/find", params={"card_id": card["card_id"]}).json() == {"pos": 2}
+    assert c.get("/api/r/r1/find", params={"card_id": "nope"}).status_code == 404
+    c.post("/api/r/r1/card/2/submit", json=answer(card))
+    (data / "readers/r1/state.json").unlink()
+    assert verify(data, imgs)["readers_cards_done"]["r1"] == 1
+    assert not (data / "readers/r1/state.json").exists()

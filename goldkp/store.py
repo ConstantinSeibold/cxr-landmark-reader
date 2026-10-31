@@ -6,7 +6,13 @@ import json
 import os
 import threading
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:                                   # Windows: one server per study, no cross-process lock
+    fcntl = None
 
 
 def write_json_atomic(path: Path, obj) -> None:
@@ -24,8 +30,27 @@ class VersionMismatch(RuntimeError):
     pass
 
 
-def log_size(log: Path) -> int:
-    return log.stat().st_size if log.exists() else 0
+def log_stamp(log: Path) -> list:
+    """Size and file identity of the log: a log replaced by import-reader is noticed even when the
+    new file happens to have the old size."""
+    if not log.exists():
+        return [0, 0]
+    s = log.stat()
+    return [s.st_size, s.st_ino]
+
+
+@contextmanager
+def reader_lock(reader_dir: Path):
+    """Exclusive lock on one reader's files across processes (server, import-reader)."""
+    reader_dir.mkdir(parents=True, exist_ok=True)
+    with open(reader_dir / ".lock", "a") as f:
+        if fcntl:
+            fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if fcntl:
+                fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def rebuild_state(log: Path, rid: str) -> dict:
@@ -44,7 +69,7 @@ def rebuild_state(log: Path, rid: str) -> dict:
             st["latest"][rec["card_id"]] = rec
             st["cursor"] = max(st["cursor"], rec.get("pos", -1) + 1)
             st["cards_sha"], st["prefill_version"] = rec.get("cards_sha"), rec.get("prefill_version")
-    st["log_size"] = log_size(log)
+    st["log_stamp"] = log_stamp(log)
     return st
 
 
@@ -54,7 +79,7 @@ def load_state(reader_dir: Path) -> dict:
     log, path = reader_dir / "decisions.jsonl", reader_dir / "state.json"
     try:
         st = json.load(open(path))
-        if isinstance(st.get("latest"), dict) and st.get("log_size") == log_size(log):
+        if isinstance(st.get("latest"), dict) and st.get("log_stamp") == log_stamp(log):
             return st
     except (OSError, ValueError):
         pass
@@ -85,16 +110,16 @@ class ReaderStore:
     def sync(self) -> None:
         """Reload when the log changed behind this process (import-reader while the server runs), so a
         later submit never writes a stale state over the imported one."""
-        with self.lock:
+        with self.lock, reader_lock(self.dir):
             self._sync()
 
     def _sync(self) -> None:
-        if self.state.get("log_size") != log_size(self.log):
+        if self.state.get("log_stamp") != log_stamp(self.log):
             self.state = {**self.rebuild(), **self.versions}
             write_json_atomic(self.state_path, self.state)
 
     def append(self, rec: dict) -> None:
-        with self.lock:
+        with self.lock, reader_lock(self.dir):
             self._sync()
             with open(self.log, "ab") as f:
                 # a line torn by a crash has no newline; end it so the new record stays a line of its own
@@ -108,7 +133,7 @@ class ReaderStore:
                 os.fsync(f.fileno())
             self.state["latest"][rec["card_id"]] = rec
             self.state["cursor"] = max(self.state["cursor"], rec["pos"] + 1)
-            self.state["log_size"] = log_size(self.log)
+            self.state["log_stamp"] = log_stamp(self.log)
             write_json_atomic(self.state_path, self.state)
 
     def latest(self, card_id: str) -> dict | None:

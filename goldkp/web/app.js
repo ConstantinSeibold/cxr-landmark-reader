@@ -95,10 +95,13 @@ async function start() {
   }
   // continue as the last reader, on the last card
   const last = LS.get("last");
-  if (last && last.mode === cfg.mode && ids.includes(last.rid)) enter(last.rid, last.pos);
+  if (last && last.mode === cfg.mode && ids.includes(last.rid)) enter(last.rid, last);
+  else if (ids.length === 1) enter(ids[0]);           // a single reader needs no picking
 }
 
-async function enter(rid, pos = null) {
+// last: where this browser left off ({pos, card_id}); the card is found again even when the
+// reading order changed in between
+async function enter(rid, last = null) {
   S.rid = rid;
   $("#pick").hidden = true;
   $("#main").hidden = false;
@@ -110,14 +113,19 @@ async function enter(rid, pos = null) {
   S.total = s.total;
   if (!s.total) { $("#banner").textContent = "Nothing to do."; return; }
   if (S.mode !== "adjudicate") await buildJumpMenu(); else { $("#jumpGroup").hidden = true; $("#btnExport").hidden = true; }
-  await load(Number.isInteger(pos) && pos >= 0 && pos < s.total ? pos : Math.min(s.cursor, s.total - 1));
+  let pos = last && Number.isInteger(last.pos) && last.pos < s.total ? last.pos : Math.min(s.cursor, s.total - 1);
+  if (last && last.card_id && S.mode !== "adjudicate") {
+    try { pos = (await api(`/api/r/${rid}/find?card_id=${encodeURIComponent(last.card_id)}`)).pos; } catch (_) { /* gone */ }
+  }
+  await load(pos);
 }
 
 // ---------------- loading a card ----------------
 // everything of the next card is fetched first and switched in one step, so the screen never shows
 // one card while edits go to another; while it loads, input is ignored; a newer load wins
 let loadSeq = 0;
-async function load(pos) {
+async function load(pos, fromSubmit = false) {
+  if (S.submitting && !fromSubmit) return;         // navigation waits for a running submit
   const seq = ++loadSeq;
   S.loading = true;
   if (S.base != null) saveDraft();                 // keep unsaved changes of the card being left
@@ -146,7 +154,7 @@ function commitCard(c, pos, img, outlines) {
   $("#comment").value = c.comment || "";
   S.base = stateNow(); S.baseComment = $("#comment").value;
   if (S.mode !== "adjudicate") restoreDraft();
-  LS.set("last", { mode: S.mode, rid: S.rid, pos });
+  LS.set("last", { mode: S.mode, rid: S.rid, pos, card_id: c.card_id });
   $("#groupTitle").textContent = `${c.gid} · ${c.group.name}${c.batch ? " · " + c.batch : ""}`;
   $("#groupRegion").textContent = `${c.group.region} · ${c.view}${c.mode === "scratch" ? " · place from scratch" : ""}`;
   $("#groupDesc").textContent = c.group.description;
@@ -556,13 +564,14 @@ function onDown(e) {
   }
   const hit = hitTest(px, py);
   if (hit >= 0) {
+    const redo = S.redo.slice();     // a press that only selects keeps the redo steps
     snapshot();                     // dropped again in onUp if the point did not move
     S.sel = hit;
     const p = S.pts[hit];
     // keep the grab offset so an off-centre grab does not make the point jump to the cursor
     const [qx, qy] = toCanvas(...p.xy);
     S.drag = { i: hit, from: p.xy.slice(), status: p.status, moved: false, dx: px - qx, dy: py - qy, sx: px, sy: py,
-               nEvents: S.nEvents };
+               nEvents: S.nEvents, redo };
     $("#view").setPointerCapture(e.pointerId);
   } else {
     // a press on empty image: a pan if it moves, else a click (see onUp)
@@ -630,7 +639,7 @@ function onUp(e, click = true) {
     return;
   }
   if (S.drag) {
-    if (!S.drag.moved) S.hist.pop();
+    if (!S.drag.moved) { S.hist.pop(); S.redo = S.drag.redo; }
     S.drag = null; renderList(); draw();
   }
 }
@@ -660,7 +669,7 @@ function resetPoint() {
 }
 
 async function toggleMasks() {
-  if (S.mode === "adjudicate") return;
+  if (S.mode === "adjudicate" || S.loading) return;
   S.showMasks = !S.showMasks;
   savePrefs();
   $("#btnMasks").textContent = `Outlines: ${S.showMasks ? "on" : "off"}`;
@@ -712,6 +721,7 @@ async function submit() {
   if (S.submitting || S.loading || S.drag || S.pan) return;
   if (!complete()) { $("#msg").textContent = "Resolve every landmark first (place it or mark it not visible)."; return; }
   S.submitting = true;
+  const card = S.card, key = S.mode === "adjudicate" ? null : draftKey();
   try {
     let r;
     if (S.mode === "adjudicate") {
@@ -726,16 +736,16 @@ async function submit() {
         active_ms: S.activeMs, n_events: S.nEvents,
       });
     }
-    if (S.mode !== "adjudicate") { LS.del(draftKey()); S.base = null; buildJumpMenu(); }
+    if (key) { LS.del(key); if (S.card === card) S.base = null; buildJumpMenu(); }
     if (S.pos >= S.total - 1) {
       // the last position is not necessarily the last open card (jumping around)
       const s = await api(S.mode === "adjudicate" ? "/api/adj/session" : `/api/r/${S.rid}/session`);
       updateProgress();
-      if (s.cursor < s.total) { await load(s.cursor); $("#msg").textContent = `Saved. Card ${s.cursor + 1} is still open.`; }
+      if (s.cursor < s.total) { await load(s.cursor, true); $("#msg").textContent = `Saved. Card ${s.cursor + 1} is still open.`; }
       else { S.base = stateNow(); S.baseComment = $("#comment").value; $("#msg").textContent = "All cards done. Thank you."; }
       return;
     }
-    await load(r.next);
+    await load(r.next, true);
   } catch (err) { $("#msg").textContent = `Not saved: ${err.message}`; }
   finally { S.submitting = false; }
 }
@@ -865,8 +875,8 @@ function wire() {
       if (!$("#help").hidden) { $("#help").hidden = true; return; }
       if (S.line) { S.line = null; draw(); return; }
       if (S.drag) {                                // back to before the drag, edit counts included
-        const n = S.drag.nEvents;
-        S.drag = null; restore(S.hist.pop()); S.nEvents = n;
+        const { nEvents, redo } = S.drag;
+        S.drag = null; S.redo = redo; restore(S.hist.pop()); S.nEvents = nEvents;
       }
       return;
     }

@@ -171,13 +171,17 @@ def merge_adjudication(df: pd.DataFrame, data: Path, amap: dict) -> pd.DataFrame
     st = json.load(open(st_path))
     df = df.copy()
     idx = {(r.card_id, r.key): i for i, r in zip(df.index, df.itertuples())}
+    # a decision counts only on the positions it was made on: a reader may have revised the card
+    # after it (then the card is adjudicated again)
+    queue, amap = adjudication_queue(df)
+    items = {it["item_id"]: it for it in queue}
     stale = 0
     for item_id, rec in st.items():
-        m = amap.get(item_id)
-        if m is None or m["card_id"] != rec.get("card_id"):
-            stale += 1                             # decided on a queue that has been rebuilt since
+        it = items.get(item_id)
+        if it is None or it["card_id"] != rec.get("card_id") or rec.get("basis") != it["keys"]:
+            stale += 1
             continue
-        first = m["A"]
+        first = amap[item_id]["A"]
         for key, v in rec["keys"].items():
             i = idx.get((rec["card_id"], key))
             if i is None:
@@ -212,13 +216,13 @@ def write_gold(df: pd.DataFrame, cj: dict, categories: Path, out: Path) -> None:
                 continue
             j = cat["keypoints"].index(row.kp)
             if row.gold == "not_visible":
-                kps[3 * j: 3 * j + 3] = [0.0, 0.0, 1]       # COCO: labelled, not visible (0 = not labelled)
+                kps[3 * j: 3 * j + 3] = [0.0, 0.0, 0]       # as in the reader export: OKS skips v = 0
                 by_dicom[row.dicom_id][cls][row.kp] = [0, 0, 0]
             else:
                 kps[3 * j: 3 * j + 3] = [float(row.gold[0]), float(row.gold[1]), 2]
                 by_dicom[row.dicom_id][cls][row.kp] = [float(row.gold[0]), float(row.gold[1]), 2]
             src[row.kp] = row.reason or "mean"
-        vis = [(kps[3 * j], kps[3 * j + 1]) for j in range(len(cat["keypoints"])) if kps[3 * j + 2] == 2]
+        vis = [(kps[3 * j], kps[3 * j + 1]) for j in range(len(cat["keypoints"])) if kps[3 * j + 2] > 0]
         bbox = ([min(p[0] for p in vis), min(p[1] for p in vis), max(p[0] for p in vis) - min(p[0] for p in vis),
                  max(p[1] for p in vis) - min(p[1] for p in vis)] if vis else [0, 0, 0, 0])
         anns.append({"id": len(anns) + 1, "image_id": int(img) + 1, "category_id": cat["id"], "keypoints": kps,
