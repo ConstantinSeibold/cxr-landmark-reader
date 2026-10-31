@@ -113,10 +113,10 @@ async function enter(rid, last = null) {
   S.total = s.total;
   if (!s.total) { $("#banner").textContent = "Nothing to do."; return; }
   if (S.mode !== "adjudicate") await buildJumpMenu(); else { $("#jumpGroup").hidden = true; $("#btnExport").hidden = true; }
-  let pos = last && Number.isInteger(last.pos) && last.pos < s.total ? last.pos : Math.min(s.cursor, s.total - 1);
+  let pos = Math.min(s.cursor, s.total - 1);
   if (last && last.card_id && S.mode !== "adjudicate") {
-    try { pos = (await api(`/api/r/${rid}/find?card_id=${encodeURIComponent(last.card_id)}`)).pos; } catch (_) { /* gone */ }
-  }
+    try { pos = (await api(`/api/r/${rid}/find?card_id=${encodeURIComponent(last.card_id)}`)).pos; } catch (_) { /* gone: first open card */ }
+  } else if (last && Number.isInteger(last.pos) && last.pos >= 0 && last.pos < s.total) pos = last.pos;
   await load(pos);
 }
 
@@ -553,7 +553,7 @@ function unflag() {
 
 function onDown(e) {
   touch();
-  if (e.button !== 0 || S.loading || !S.card) return;
+  if (e.button !== 0 || S.loading || S.submitting || !S.card) return;
   const [px, py] = canvasPos(e);
   if (S.ruler) {
     const at = toImage(px, py).map(clamp512);
@@ -721,7 +721,9 @@ async function submit() {
   if (S.submitting || S.loading || S.drag || S.pan) return;
   if (!complete()) { $("#msg").textContent = "Resolve every landmark first (place it or mark it not visible)."; return; }
   S.submitting = true;
+  $("#comment").readOnly = true; $("#flag").disabled = true;
   const card = S.card, key = S.mode === "adjudicate" ? null : draftKey();
+  let saved = false;
   try {
     let r;
     if (S.mode === "adjudicate") {
@@ -736,6 +738,7 @@ async function submit() {
         active_ms: S.activeMs, n_events: S.nEvents,
       });
     }
+    saved = true;
     if (key) { LS.del(key); if (S.card === card) S.base = null; buildJumpMenu(); }
     if (S.pos >= S.total - 1) {
       // the last position is not necessarily the last open card (jumping around)
@@ -746,8 +749,8 @@ async function submit() {
       return;
     }
     await load(r.next, true);
-  } catch (err) { $("#msg").textContent = `Not saved: ${err.message}`; }
-  finally { S.submitting = false; }
+  } catch (err) { $("#msg").textContent = saved ? `Saved, but the next card did not load: ${err.message}` : `Not saved: ${err.message}`; }
+  finally { S.submitting = false; $("#comment").readOnly = false; $("#flag").disabled = false; }
 }
 
 // ---------------- adjudication ----------------
@@ -881,7 +884,7 @@ function wire() {
       return;
     }
     if (k === "?") { $("#help").hidden = !$("#help").hidden; return; }
-    if (!$("#help").hidden || S.loading) return;            // no edits under the help overlay or while loading
+    if (!$("#help").hidden || S.loading || S.submitting) return;   // no edits under the help overlay, while loading or saving
     if (k === "Enter" && e.repeat) { e.preventDefault(); return; }          // holding Enter submits once
     if ((e.ctrlKey || e.metaKey) && (k.toLowerCase() === "y" || (k.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); redo(); return; }
     if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "z") { e.preventDefault(); undo(); return; }
