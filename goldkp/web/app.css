@@ -91,7 +91,7 @@ header .grow { flex: 1; }
 #jumpBox { display: flex; align-items: center; gap: 6px; color: var(--muted); }
 #jump { width: 58px; text-align: right; font-variant-numeric: tabular-nums; -moz-appearance: textfield; }
 #jump::-webkit-inner-spin-button, #jump::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-#jumpGroup { max-width: 260px; color: var(--muted); }
+#jumpGroup { max-width: 260px; min-width: 0; flex: 0 1 auto; color: var(--muted); }
 #totalProgress, #timer { font-variant-numeric: tabular-nums; }
 #progress { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--line); }
 #progressBar { height: 100%; width: 0; background: var(--accent); transition: width .25s; }
@@ -99,9 +99,8 @@ header .grow { flex: 1; }
 #work { display: flex; flex: 1; min-height: 0; }
 #left { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; padding: 12px 16px 16px; }
 
-/* floating toolbar pill */
-#toolbar { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 2px; padding: 4px 6px;
-  background: var(--surface); border-radius: 14px; margin-bottom: 12px; flex: none; max-width: 100%; }
+/* toolbar in the header, centred between the left and right groups */
+#toolbar { display: flex; align-items: center; gap: 2px; flex: none; }
 #toolbar .sep { width: 1px; height: 18px; background: var(--line); margin: 0 6px; }
 #toolbar .slider { display: flex; align-items: center; gap: 6px; color: var(--muted); padding: 0 6px; }
 
@@ -199,7 +198,10 @@ header .grow { flex: 1; }
 #help th { text-align: left; padding: 14px 0 4px; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
 #helpClose { align-self: flex-end; margin-top: 16px; padding: 7px 20px; }
 
+/* narrower windows: shorter sliders first, then the total count (it is also in the progress line) */
+@media (max-width: 1380px) { #toolbar .slider input { width: 110px; } }
+@media (max-width: 1240px) { #toolbar .slider input { width: 80px; } #totalProgress { display: none; } #jumpGroup { max-width: 170px; } }
 @media (max-width: 1100px) {
   #right { flex-basis: 330px; }
-  #toolbar .slider input { width: 110px; }
+
 }
