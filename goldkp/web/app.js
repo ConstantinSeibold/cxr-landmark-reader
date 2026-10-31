@@ -18,10 +18,72 @@ const VIEW_MIN = 320, THUMB_W = 96, HIT = 10, DRAG_MIN = 2, MAX_GAIN = 2.5;
 // than PAN_MIN screen pixels is a click (places a point), more is a pan
 const ZOOM_MIN_SIDE = 24, PAN_MIN = 4;
 
+// ---------------- browser cache ----------------
+// kept in this browser only (localStorage): the last reader and card, view settings, and per card
+// the changes not yet submitted, so a reload or a server restart continues where the reader left off.
+// Submitted answers live on the server; a draft is dropped when its card is submitted.
+const LS = {
+  get(k) { try { return JSON.parse(localStorage.getItem(`goldkp:${k}`)); } catch (_) { return null; } },
+  set(k, v) { try { localStorage.setItem(`goldkp:${k}`, JSON.stringify(v)); } catch (_) { /* full or blocked */ } },
+  del(k) { try { localStorage.removeItem(`goldkp:${k}`); } catch (_) { /* blocked */ } },
+};
+// shortcut labels in Mac notation (⌘ ⌥ ⇧, modifiers in Apple's order) on a Mac; the handlers
+// already accept Cmd for Ctrl
+const IS_MAC = /mac|iphone|ipad/i.test(navigator.userAgentData?.platform || navigator.platform || "");
+function keys(t) {
+  if (!IS_MAC) return t;
+  return t.replace(/Ctrl\+Shift\+/g, "⇧⌘").replace(/,? ?\/? ?Ctrl\+Y/g, "").replace(/Ctrl\+/g, "⌘")
+    .replace(/Alt \+ /g, "⌥ ").replace(/Alt\+/g, "⌥").replace(/Shift\+/g, "⇧").replace(/Shift:/g, "⇧:");
+}
+function macLabels() {
+  if (!IS_MAC) return;
+  document.querySelectorAll("[title]").forEach((el) => { el.title = keys(el.title); });
+  document.querySelectorAll("#help td").forEach((el) => { el.textContent = keys(el.textContent); });
+}
+
+const draftKey = () => `draft:${S.rid}:${S.card.card_id}`;
+
+function saveDraft() {
+  if (S.mode === "adjudicate" || !S.card || S.base == null) return;
+  const state = stateNow(), comment = $("#comment").value;
+  const dirty = state !== S.base || comment !== S.baseComment;
+  if (!dirty && !S.activeMs) { LS.del(draftKey()); return; }
+  LS.set(draftKey(), { dirty, state, comment, activeMs: S.activeMs, nEvents: S.nEvents, full: S.full, zoomBox: S.zoomBox });
+}
+
+// apply a saved draft to the freshly loaded card; undo goes back to the submitted version
+function restoreDraft() {
+  const d = LS.get(draftKey());
+  if (!d) return;
+  S.activeMs = d.activeMs || 0; S.nEvents = d.nEvents || 0;
+  if (!d.dirty) return;
+  const st = JSON.parse(d.state);
+  if (st.pts.length !== S.pts.length) { LS.del(draftKey()); return; }
+  S.hist = [S.base];
+  st.pts.forEach((q, i) => Object.assign(S.pts[i], q));
+  $("#flag").checked = st.flag;
+  $("#comment").value = d.comment;
+  if (!S.card.full) S.full = !!d.full;
+  S.zoomBox = d.zoomBox || null;
+  $("#msg").textContent = keys("Unsaved changes restored (Ctrl+Z to go back).");
+}
+
+function savePrefs() {
+  LS.set("prefs", { bright: $("#bright").value, contrast: $("#contrast").value, masks: S.showMasks });
+}
+function loadPrefs() {
+  const p = LS.get("prefs");
+  if (!p) return;
+  $("#bright").value = p.bright; $("#contrast").value = p.contrast;
+  S.showMasks = !!p.masks && S.mode !== "adjudicate";
+  $("#btnMasks").textContent = `Outlines: ${S.showMasks ? "on" : "off"}`;
+}
+
 // ---------------- start ----------------
 async function start() {
   const cfg = await api("/api/config");
   S.mode = cfg.mode;
+  loadPrefs();
   const box = $("#readerButtons");
   const ids = cfg.mode === "adjudicate" ? ["adjudicator"] : cfg.readers;
   if (cfg.mode === "adjudicate") $("#pickHint").textContent = "Adjudication: resolve the landmarks the two readers disagreed on.";
@@ -31,9 +93,12 @@ async function start() {
     b.onclick = () => enter(r);
     box.appendChild(b);
   }
+  // continue as the last reader, on the last card
+  const last = LS.get("last");
+  if (last && last.mode === cfg.mode && ids.includes(last.rid)) enter(last.rid, last.pos);
 }
 
-async function enter(rid) {
+async function enter(rid, pos = null) {
   S.rid = rid;
   $("#pick").hidden = true;
   $("#main").hidden = false;
@@ -45,7 +110,7 @@ async function enter(rid) {
   S.total = s.total;
   if (!s.total) { $("#banner").textContent = "Nothing to do."; return; }
   if (S.mode !== "adjudicate") await buildJumpMenu(); else { $("#jumpGroup").hidden = true; $("#btnExport").hidden = true; }
-  await load(Math.min(s.cursor, s.total - 1));
+  await load(Number.isInteger(pos) && pos >= 0 && pos < s.total ? pos : Math.min(s.cursor, s.total - 1));
 }
 
 // ---------------- loading a card ----------------
@@ -62,6 +127,9 @@ async function load(pos) {
   renderLegend();
   $("#flag").checked = !!c.flag;
   $("#comment").value = c.comment || "";
+  S.base = stateNow(); S.baseComment = $("#comment").value;
+  if (S.mode !== "adjudicate") restoreDraft();
+  LS.set("last", { mode: S.mode, rid: S.rid, pos });
   $("#groupTitle").textContent = `${c.gid} · ${c.group.name}${c.batch ? " · " + c.batch : ""}`;
   $("#groupRegion").textContent = `${c.group.region} · ${c.view}${c.mode === "scratch" ? " · place from scratch" : ""}`;
   $("#groupDesc").textContent = c.group.description;
@@ -377,6 +445,7 @@ function renderList() {
   const open = S.pts.filter((p) => !resolved(p)).length;
   $("#btnSubmit").disabled = open > 0;
   $("#btnSubmit").title = open ? `${open} landmark${open > 1 ? "s" : ""} still open` : "Submit and next (Enter)";
+  saveDraft();
   $("#btnUndo").disabled = !S.hist.length;
   $("#btnRedo").disabled = !S.redo.length;
 }
@@ -561,6 +630,7 @@ function resetPoint() {
 async function toggleMasks() {
   if (S.mode === "adjudicate") return;
   S.showMasks = !S.showMasks;
+  savePrefs();
   $("#btnMasks").textContent = `Outlines: ${S.showMasks ? "on" : "off"}`;
   if (S.showMasks && !S.outlines) S.outlines = await api(`/api/r/${S.rid}/card/${S.pos}/outlines`);
   renderLegend();
@@ -615,7 +685,7 @@ async function submit() {
         active_ms: S.activeMs, n_events: S.nEvents,
       });
     }
-    if (S.mode !== "adjudicate") buildJumpMenu();
+    if (S.mode !== "adjudicate") { LS.del(draftKey()); S.base = null; buildJumpMenu(); }
     if (S.pos >= S.total - 1) { $("#banner").textContent = "All cards done — thank you."; updateProgress(); return; }
     await load(r.next);
   } catch (err) { $("#msg").textContent = `Not saved: ${err.message}`; }
@@ -665,8 +735,8 @@ async function exportNow() {
 }
 
 // brightness and contrast: the sliders clamp the value to their own range
-function adjust(sel, d) { const el = $(sel); el.value = +el.value + d; draw(); }
-function resetImage() { $("#bright").value = 100; $("#contrast").value = 100; draw(); }
+function adjust(sel, d) { const el = $(sel); el.value = +el.value + d; savePrefs(); draw(); }
+function resetImage() { $("#bright").value = 100; $("#contrast").value = 100; savePrefs(); draw(); }
 
 // ---------------- wiring ----------------
 function wire() {
@@ -685,8 +755,13 @@ function wire() {
   $("#btnRuler").onclick = () => setRuler(!S.ruler);
   $("#btnHide").onpointerdown = () => { S.hide = true; draw(); };
   $("#btnHide").onpointerup = () => { S.hide = false; draw(); };
-  $("#bright").oninput = draw;
-  $("#contrast").oninput = draw;
+  $("#bright").oninput = () => { savePrefs(); draw(); };
+  $("#contrast").oninput = () => { savePrefs(); draw(); };
+  $("#comment").addEventListener("input", saveDraft);
+  // time, zoom and view are written when the page goes away (reload, close, tab switch)
+  window.addEventListener("pagehide", saveDraft);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) saveDraft(); });
+  $("#who").onclick = () => { LS.del("last"); location.reload(); };
   $("#btnResetView").onclick = resetImage;
   window.addEventListener("resize", () => { if (S.card) { layout(); draw(); } });
   $("#refMain").onclick = () => setRef("main");
@@ -770,4 +845,5 @@ function wire() {
 }
 
 wire();
+macLabels();
 start();

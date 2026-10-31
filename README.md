@@ -125,6 +125,10 @@ Use a separate reader id (e.g. `--readers pilot`) for a pilot so it never mixes 
 - **Navigation:** card number box (type a number, Enter) and the `go to…` menu (first card of every
   group with progress, first scratch card) in the header; Back / Submit pinned at the bottom of
   the side panel. Undo / redo sit at the start of the toolbar above the image.
+- **Continue after a reload:** the browser keeps the last reader and card, brightness, contrast and
+  outlines, and per card the changes not yet submitted (points, flag, comment, time, zoom). A reload
+  or a server restart opens that card again with them; Ctrl+Z goes back to the submitted version.
+  Click the reader name top left to switch reader. Only submitted cards are saved on the server.
 - **Zoom:** mouse wheel or trackpad pinch zooms at the cursor, `+` / `-` and the buttons bottom right
   on the image too; drag empty image or Alt + arrow keys to pan; `z` goes back to the card's view.
 - **Ruler** (`l`): drag on the image for a length in cm. Screen only, never saved. **Approximate:**

@@ -18,7 +18,8 @@ button:disabled:hover { border-color: #3a424b; }
 #main { height: 100vh; display: flex; flex-direction: column; padding-top: 0; }
 header { position: relative; display: flex; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); flex: none; }
 header .grow { flex: 1; }
-#who { font-weight: 600; }
+#who { font-weight: 600; cursor: pointer; }
+#who:hover { color: var(--accent); }
 #jumpBox { display: flex; align-items: center; gap: 4px; }
 #jump { width: 56px; text-align: right; background: var(--panel); color: var(--fg); border: 1px solid #3a424b; border-radius: 4px; padding: 3px 6px; -moz-appearance: textfield; }
 #jump::-webkit-inner-spin-button, #jump::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
