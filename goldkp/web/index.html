@@ -41,6 +41,10 @@
           <button id="btnMasks" title="Structure outlines (m): solid = own structure, dashed = structure the rule reads">Outlines: off</button>
           <button id="btnHide" title="Hold to hide the points (h)">Hide points</button>
         </span>
+        <!-- ruler after the length tool of OHIF and Horos: toggle the tool, drag a line, the length sits at its end -->
+        <span class="tgroup">
+          <button id="btnRuler" title="Ruler (l): drag on the image to measure. Approximate only" aria-pressed="false"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M2.1 16.6 16.6 2.1l5.3 5.3L7.4 21.9zm2.8 0 2.5 2.5L19.1 7.4l-2.5-2.5-1.4 1.4 1.4 1.4-1 1-1.4-1.4-1.4 1.4 2.1 2.1-1 1-2.1-2.1-1.4 1.4 1.4 1.4-1 1-1.4-1.4-1.4 1.4 2.1 2.1-1 1-2.1-2.1z"/></svg> Ruler</button>
+        </span>
         <span class="tgroup">
           <label title="Brightness ([ / ])">☀ <input id="bright" type="range" min="50" max="200" value="100"></label>
           <label title="Contrast ({ / })">◐ <input id="contrast" type="range" min="50" max="250" value="100"></label>
@@ -53,6 +57,7 @@
         <div id="canvasWrap">
           <canvas id="view" width="720" height="720"></canvas>
           <div id="banner"></div>
+          <div id="rulerWarn" hidden role="note"></div>
           <div id="maskLegend" hidden></div>
         </div>
       </div>
@@ -130,12 +135,13 @@
       <tr><td>m</td><td>structure outlines (solid: own structure, dashed: structure the rule reads)</td></tr>
       <tr><td>c</td><td>switch zoomed crop / whole image (cards with a zoomed view)</td></tr>
       <tr><td>h (hold)</td><td>hide the points</td></tr>
+      <tr><td>l</td><td>ruler on / off: drag to measure (approximate, not for decisions)</td></tr>
       <tr><td>[ / ]</td><td>brightness down / up</td></tr>
       <tr><td>{ / }</td><td>contrast down / up</td></tr>
       <tr><td>0</td><td>reset brightness and contrast</td></tr>
       <tr><td>1 / 2</td><td>reference: example / all levels</td></tr>
       <tr><td>?</td><td>this help</td></tr>
-      <tr><td>Esc</td><td>cancel a drag / close this help</td></tr>
+      <tr><td>Esc</td><td>cancel a drag / clear the ruler / close this help</td></tr>
     </table>
     <button id="helpClose">Close</button>
   </div>

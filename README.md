@@ -125,6 +125,9 @@ Use a separate reader id (e.g. `--readers pilot`) for a pilot so it never mixes 
 - **Navigation:** card number box (type a number, Enter) and the `go to…` menu (first card of every
   group with progress, first scratch card) in the header; Back / Submit pinned at the bottom of
   the side panel. Undo / redo sit at the start of the toolbar above the image.
+- **Ruler** (`l`): drag on the image for a length in cm. Screen only, never saved. **Approximate:**
+  the study JPGs carry no pixel spacing, so 0.139 mm per pixel is assumed (`--pixel-spacing`, or a
+  `pixel_spacing` per image in `cards.json`), and chest films magnify (AP more than PA).
 - **Blinding:** readers only ever see their own answers.
 
 **Keyboard** (`?` shows this in the app)
@@ -214,6 +217,8 @@ You receive one data zip from the study coordinator; everything else is in this 
    ```
    Keep the terminal open while reading. Every submitted card is saved at once; stop at any time and
    start again with the same command to continue where you left off.
+   On macOS and Linux `make start READERS=r1` runs it in the background instead (the terminal may
+   be closed); `make restart`, `make stop` and `make status` manage it.
 4. **Read** (section [2](#2-read)): correct the points, Enter for the next card; `n` not visible,
    `u` unsure, `f` not assessable, Ctrl+Z undo, `?` for all keys. Prefer *unsure* to guessing.
 5. **Send your results**: click *Export* and send the folder it names (`study/exports/r1/<time>/`)

@@ -34,6 +34,10 @@ CSP = ("default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe
        "script-src 'self'; connect-src 'self'")
 
 
+
+# assumed detector pixel size (mm) for the ruler; common for MIMIC-CXR, not checked per image
+DEFAULT_PIXEL_SPACING = 0.139
+
 def _decode_rle(rle: dict) -> np.ndarray:
     from pycocotools import mask as M
     r = dict(rle)
@@ -45,7 +49,7 @@ def _decode_rle(rle: dict) -> np.ndarray:
 def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "read",
                allow_version_change: bool = False, blocks: list[int] | None = None,
                subset: dict[str, int] | None = None, groups: list[str] | None = None,
-               skip_unknown_groups: bool = False) -> FastAPI:
+               skip_unknown_groups: bool = False, pixel_spacing: float = DEFAULT_PIXEL_SPACING) -> FastAPI:
     cards_json = json.load(open(data / "cards.json"))
     cards, sha = cards_json["cards"], cards_json["sha"]
     if groups and skip_unknown_groups:
@@ -64,6 +68,12 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
     block_of = {im: n for n, b in enumerate(image_blocks(cards, blocks), 1) for im in b} if blocks else {}
     if shared and not blocks:
         block_of = {c["img"]: 1 if c["img"] in shared else 2 for c in cards}
+    def scale(img_idx: int) -> dict:
+        """mm per original pixel for the ruler: the image's own value when cards.json has one,
+        else the assumed default (the study JPGs carry no pixel spacing)."""
+        own = images[img_idx].get("pixel_spacing")
+        return {"mm_per_px": own or pixel_spacing, "spacing_assumed": not own}
+
     ref_files = {f for g in refs["files"].values() for v in g.values() for f in v.values()}
 
     @functools.lru_cache(maxsize=16)
@@ -202,7 +212,7 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
             "block": block_of.get(c["img"]),
             "gid": c["gid"], "group": {"name": g["name"], "region": g["region"], "description": g["description"]},
             "batch": c["batch"], "box": c["box"], "full": c["full"], "mode": c["mode"],
-            "orig_wh": pf.get("orig_wh"), "points": pts,
+            "orig_wh": pf.get("orig_wh"), **scale(c["img"]), "points": pts,
             "edges": [e for e in vocab["edges"][view] if e[0] in keyset and e[1] in keyset],
             "refs": {k: f"/api/ref/{v}" for k, v in ref.items()},
             "outlines": outline_classes(c),
@@ -308,7 +318,7 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
         return {"pos": i, "total": len(q), "item_id": it["item_id"], "img": c["img"], "view": view,
                 "gid": c["gid"], "group": {"name": g["name"], "region": g["region"], "description": g["description"]},
                 "batch": c["batch"], "box": c["box"], "full": c["full"], "orig_wh": prefill(c["img"]).get("orig_wh"),
-                "keys": keys, "refs": {k: f"/api/ref/{v}" for k, v in ref.items()},
+                **scale(c["img"]), "keys": keys, "refs": {k: f"/api/ref/{v}" for k, v in ref.items()},
                 "resolved": adj_state().get(it["item_id"])}
 
     @app.post("/api/adj/item/{i}/resolve")
@@ -352,6 +362,8 @@ def main() -> None:
     ap.add_argument("--subset", default=None, help="frontal,lateral image counts read first in every group "
                     "(same images for every reader, own order per reader); default 30,20 unless --image-blocks "
                     "is given, off to turn it off")
+    ap.add_argument("--pixel-spacing", type=float, default=DEFAULT_PIXEL_SPACING,
+                    help="assumed mm per pixel for the ruler when an image has no pixel_spacing in cards.json")
     ap.add_argument("--group-order", default=None, help="groups to read first, in this order, e.g. G13,G12,G15; "
                     "default the study order (DEFAULT_GROUP_ORDER in goldkp/cards.py), off to turn it off")
     args = ap.parse_args()
@@ -371,6 +383,8 @@ def main() -> None:
         raise SystemExit("--image-blocks and --subset take comma-separated whole numbers")
     if any(n < 1 for n in blocks) or any(n < 0 for n in sizes) or len(sizes) > 2:
         raise SystemExit("--image-blocks sizes must be positive; --subset is frontal[,lateral], not negative")
+    if not 0 < args.pixel_spacing < 5:
+        raise SystemExit("--pixel-spacing is mm per pixel, e.g. 0.139")
     if args.host not in {"127.0.0.1", "localhost", "::1"}:
         raise SystemExit("the reader app only binds to loopback; use an SSH tunnel for remote readers")
     import uvicorn
@@ -380,7 +394,7 @@ def main() -> None:
                          blocks or None,
                          dict(zip(("frontal", "lateral"), sizes)) or None,
                          [g.strip() for g in args.group_order.split(",") if g.strip()] or None,
-                         skip_unknown_groups=default_groups)
+                         skip_unknown_groups=default_groups, pixel_spacing=args.pixel_spacing)
     except ValueError as e:
         raise SystemExit(str(e))
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")

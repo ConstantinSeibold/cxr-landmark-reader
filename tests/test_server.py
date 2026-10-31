@@ -150,7 +150,7 @@ def test_default_reading_order(monkeypatch, flags, subset, groups):
     from goldkp.cards import DEFAULT_GROUP_ORDER
     seen = {}
 
-    def fake_app(data, images, readers, mode, allow, blocks, sub, grp, skip_unknown_groups=False):
+    def fake_app(data, images, readers, mode, allow, blocks, sub, grp, skip_unknown_groups=False, **kw):
         seen.update(subset=sub, groups=grp, skip=skip_unknown_groups)
         raise SystemExit(0)
 
@@ -171,6 +171,18 @@ def test_default_group_order_skips_missing_groups(study):
     data, imgs = study
     c = TestClient(create_app(data, imgs, ["r1"], groups=DEFAULT_GROUP_ORDER + ["G99"], skip_unknown_groups=True))
     assert c.get("/api/r/r1/cards").status_code == 200
+
+
+def test_card_carries_ruler_scale(study):
+    from fastapi.testclient import TestClient
+
+    from goldkp.server import DEFAULT_PIXEL_SPACING, create_app
+    data, imgs = study
+    c = TestClient(create_app(data, imgs, ["r1"]))
+    card = c.get("/api/r/r1/card/0").json()
+    assert card["mm_per_px"] == DEFAULT_PIXEL_SPACING and card["spacing_assumed"] is True
+    card = TestClient(create_app(data, imgs, ["r1"], pixel_spacing=0.2)).get("/api/r/r1/card/0").json()
+    assert card["mm_per_px"] == 0.2
 
 
 def test_partial_export(study, client_factory):

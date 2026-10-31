@@ -10,7 +10,7 @@ const post = (u, b) => fetch(u, { method: "POST", headers: { "Content-Type": "ap
 const S = {
   mode: "read", rid: null, pos: 0, total: 0, card: null, pts: [], sel: 0,
   img: null, outlines: null, showMasks: false, hide: false, full: false, hist: [], redo: [],
-  drag: null, activeMs: 0, lastInput: Date.now(), nEvents: 0, refKind: "main",
+  drag: null, ruler: false, line: null, activeMs: 0, lastInput: Date.now(), nEvents: 0, refKind: "main",
   view: { x0: 0, y0: 0, x1: 512, y1: 512, sx: 1, sy: 1 },
 };
 const VIEW_MIN = 320, THUMB_W = 96, HIT = 10, DRAG_MIN = 2, MAX_GAIN = 2.5;
@@ -53,7 +53,7 @@ async function load(pos) {
   S.pts = S.mode === "adjudicate" ? adjPoints(c) : c.points.map((p) => ({ ...p, n_edits: 0 }));
   S.sel = Math.max(0, S.pts.findIndex((p) => p.status === "missing"));
   S.img = await loadImage(`/api/img/${c.img}`);
-  S.hist = []; S.redo = [];
+  S.hist = []; S.redo = []; S.line = null;
   S.outlines = null;
   if (S.showMasks && S.mode !== "adjudicate") S.outlines = await api(`/api/r/${S.rid}/card/${pos}/outlines`);
   renderLegend();
@@ -69,7 +69,7 @@ async function load(pos) {
   updateProgress();
   layout();
   renderList();
-  draw();
+  if (S.ruler) setRuler(true); else draw();        // refresh the warning for this image's scale
 }
 
 function loadImage(src) {
@@ -166,6 +166,7 @@ function draw() {
   if (!S.hide) {
     if (S.mode === "adjudicate") drawAdj(ctx); else drawPoints(ctx);
   }
+  if (S.line) drawRuler(ctx);
   drawThumb();
   banner();
 }
@@ -227,6 +228,51 @@ function drawPoints(ctx) {
       ctx.fillStyle = "#fff"; ctx.fillText(t, q[0] + 11, q[1] - 5);
     }
   });
+}
+
+// ---------------- ruler ----------------
+// screen-only measuring aid: never saved, not part of undo. The length is approximate: the study
+// images carry no pixel spacing (an assumed detector value is used) and a chest film magnifies
+// the mediastinum (more on AP than PA), so the tool warns on every use.
+function lineMm(a, b) {
+  const [w, h] = S.card.orig_wh || [512, 512];
+  return Math.hypot(((b[0] - a[0]) * w) / 512, ((b[1] - a[1]) * h) / 512) * S.card.mm_per_px;
+}
+const fmtCm = (mm) => `≈ ${(mm / 10).toFixed(1)} cm`;
+
+function drawRuler(ctx) {
+  const [ax, ay] = toCanvas(...S.line.a), [bx, by] = toCanvas(...S.line.b);
+  const len = Math.hypot(bx - ax, by - ay);
+  const nx = len ? (ay - by) / len * 5 : 0, ny = len ? (bx - ax) / len * 5 : 0;
+  for (const [w, col] of [[3.5, "rgba(0,0,0,.85)"], [1.6, "#ffb703"]]) {
+    ctx.lineWidth = w; ctx.strokeStyle = col;
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
+    for (const [x, y] of [[ax, ay], [bx, by]]) { ctx.moveTo(x - nx, y - ny); ctx.lineTo(x + nx, y + ny); }
+    ctx.stroke();
+  }
+  const t = `${fmtCm(lineMm(S.line.a, S.line.b))} ⚠`;
+  ctx.font = "bold 13px system-ui";
+  const tw = ctx.measureText(t).width;
+  const tx = Math.min(Math.max(4, bx + 10), ctx.canvas.width - tw - 10), ty = Math.min(Math.max(18, by - 8), ctx.canvas.height - 6);
+  ctx.fillStyle = "rgba(0,0,0,.8)"; ctx.fillRect(tx - 4, ty - 14, tw + 8, 19);
+  ctx.fillStyle = "#ffb703"; ctx.fillText(t, tx, ty);
+}
+
+function setRuler(on) {
+  S.ruler = on;
+  if (!on) S.line = null;
+  $("#btnRuler").classList.toggle("on", on);
+  $("#btnRuler").setAttribute("aria-pressed", String(on));
+  $("#view").classList.toggle("ruler", on);
+  const w = $("#rulerWarn");
+  w.hidden = !on;
+  if (on) {
+    const c = S.card;
+    w.textContent = "⚠ Approximate only, not for clinical decisions";
+    w.title = (c.spacing_assumed ? `Pixel size assumed (${c.mm_per_px} mm), not read from the image. ` : "")
+      + "Not corrected for magnification (AP films magnify the mediastinum more than PA).";
+  }
+  draw();
 }
 
 function drawThumb() {
@@ -399,6 +445,13 @@ function toggleFlag() {
 function onDown(e) {
   touch();
   const [px, py] = canvasPos(e);
+  if (S.ruler) {
+    const at = toImage(px, py).map(clamp512);
+    S.line = { a: at, b: at.slice(), live: true };
+    $("#view").setPointerCapture(e.pointerId);
+    draw();
+    return;
+  }
   const hit = hitTest(px, py);
   if (hit >= 0) {
     snapshot();                     // dropped again in onUp if the point did not move
@@ -426,6 +479,7 @@ function onDown(e) {
 }
 
 function onMove(e) {
+  if (S.line && S.line.live) { S.line.b = toImage(...canvasPos(e)).map(clamp512); draw(); return; }
   if (!S.drag) return;
   const p = S.pts[S.drag.i];
   const [px, py] = canvasPos(e);
@@ -438,6 +492,12 @@ function onMove(e) {
 }
 
 function onUp() {
+  if (S.line && S.line.live) {
+    S.line.live = false;
+    if (S.line.a[0] === S.line.b[0] && S.line.a[1] === S.line.b[1]) S.line = null;      // a click clears the line
+    draw();
+    return;
+  }
   if (S.drag) {
     if (!S.drag.moved) S.hist.pop();
     S.drag = null; renderList(); draw();
@@ -557,6 +617,7 @@ function wire() {
   $("#btnPrev").onclick = () => S.pos > 0 && load(S.pos - 1);
   $("#btnCrop").onclick = toggleFull;
   $("#btnMasks").onclick = toggleMasks;
+  $("#btnRuler").onclick = () => setRuler(!S.ruler);
   $("#btnHide").onpointerdown = () => { S.hide = true; draw(); };
   $("#btnHide").onpointerup = () => { S.hide = false; draw(); };
   $("#bright").oninput = draw;
@@ -595,6 +656,7 @@ function wire() {
     const k = e.key;
     if (k === "Escape") {
       if (!$("#help").hidden) { $("#help").hidden = true; return; }
+      if (S.line) { S.line = null; draw(); return; }
       if (S.drag) { const p = S.pts[S.drag.i]; p.xy = S.drag.from; p.status = S.drag.status; S.drag = null; renderList(); draw(); }
       return;
     }
@@ -620,6 +682,7 @@ function wire() {
     else if (k === "r") resetPoint();
     else if (k === "m") toggleMasks();
     else if (k === "c") toggleFull();
+    else if (k === "l") setRuler(!S.ruler);
     else if (k === "1") setRef("main");
     else if (k === "2" && S.card.refs.series) setRef("series");
     else if (k === "h" && !S.hide) { S.hide = true; draw(); }
