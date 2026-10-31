@@ -76,7 +76,21 @@ function loadPrefs() {
   if (!p) return;
   $("#bright").value = p.bright; $("#contrast").value = p.contrast;
   S.showMasks = !!p.masks && S.mode !== "adjudicate";
-  $("#btnMasks").textContent = `Outlines: ${S.showMasks ? "on" : "off"}`;
+  pressed("#btnMasks", S.showMasks);
+}
+
+// a toggle button shows its state by its tint (as the Photos editors do), not by its text
+function pressed(sel, on) {
+  $(sel).classList.toggle("on", on);
+  $(sel).setAttribute("aria-pressed", String(on));
+}
+
+// round initials avatar, as in Google and Apple account pickers
+function avatar(name) {
+  const a = document.createElement("span");
+  a.className = "avatar";
+  a.textContent = name.slice(0, 2).toUpperCase();
+  return a;
 }
 
 // ---------------- start ----------------
@@ -89,7 +103,7 @@ async function start() {
   if (cfg.mode === "adjudicate") $("#pickHint").textContent = "Adjudication: resolve the landmarks the two readers disagreed on.";
   for (const r of ids) {
     const b = document.createElement("button");
-    b.textContent = r;
+    b.append(avatar(r), Object.assign(document.createElement("span"), { textContent: r }));
     b.onclick = () => enter(r);
     box.appendChild(b);
   }
@@ -105,7 +119,9 @@ async function enter(rid, last = null) {
   S.rid = rid;
   $("#pick").hidden = true;
   $("#main").hidden = false;
-  $("#who").textContent = S.mode === "adjudicate" ? "adjudication" : `reader ${rid}`;
+  const name = S.mode === "adjudicate" ? "adjudication" : rid;
+  $("#who").replaceChildren(avatar(name));
+  $("#who").title = `${S.mode === "adjudicate" ? "Adjudication" : `Reader ${rid}`}. Switch reader`;
   $("#adjLegend").hidden = S.mode !== "adjudicate";
   $("#flagRow").hidden = S.mode === "adjudicate";
   $("#comment").hidden = S.mode === "adjudicate";
@@ -217,8 +233,8 @@ function layout() {
   // the button shows the current view; cards without a zoomed view (the whole image is the crop) disable it
   const b = $("#btnCrop");
   b.disabled = c.full;
-  b.textContent = c.full ? "View: whole image" : S.full ? "View: whole image (c)" : "View: zoomed (c)";
-  b.title = c.full ? "This card is always shown as the whole image" : "Switch between the zoomed crop and the whole image (c)";
+  pressed("#btnCrop", S.full || c.full);
+  b.title = c.full ? "This card always shows the whole image" : S.full ? "Back to the zoomed view (c)" : "Whole image (c)";
   const th = $("#thumb");
   th.width = THUMB_W; th.height = Math.round(THUMB_W * ar);
 }
@@ -359,8 +375,7 @@ function drawRuler(ctx) {
 function setRuler(on) {
   S.ruler = on;
   if (!on) S.line = null;
-  $("#btnRuler").classList.toggle("on", on);
-  $("#btnRuler").setAttribute("aria-pressed", String(on));
+  pressed("#btnRuler", on);
   $("#view").classList.toggle("ruler", on);
   const w = $("#rulerWarn");
   w.hidden = !on;
@@ -672,7 +687,7 @@ async function toggleMasks() {
   if (S.mode === "adjudicate" || S.loading) return;
   S.showMasks = !S.showMasks;
   savePrefs();
-  $("#btnMasks").textContent = `Outlines: ${S.showMasks ? "on" : "off"}`;
+  pressed("#btnMasks", S.showMasks);
   if (S.showMasks && !S.outlines) {
     const card = S.card, o = await api(`/api/r/${S.rid}/card/${S.pos}/outlines`);
     if (card !== S.card || !S.showMasks) return;
