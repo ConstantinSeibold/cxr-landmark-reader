@@ -26,7 +26,7 @@ def read_all(c, rid, sigma, s_of, rng, outlier_card=None):
                 e = e + 60
             pts.append({"key": p["key"], "status": "added" if p["xy"] is None else "moved",
                         "unsure": False, "xy": [float(x + e[0]), float(y + e[1])]})
-        r = c.post(f"/api/r/{rid}/card/{pos}/submit", json={"points": pts, "active_ms": 500})
+        r = c.post(f"/api/r/{rid}/card/{pos}/submit", json={"card_id": card["card_id"], "points": pts, "active_ms": 500})
         assert r.status_code == 200, r.text
 
 
@@ -83,7 +83,7 @@ def test_adjudication_merge(tmp_path, client_factory):
     assert s["total"] >= 1
     item = adj.get("/api/adj/item/0").json()
     keys = {k["key"]: {"choice": "A"} for k in item["keys"]}
-    assert adj.post("/api/adj/item/0/resolve", json={"keys": keys}).status_code == 200
+    assert adj.post("/api/adj/item/0/resolve", json={"item_id": item["item_id"], "keys": keys}).status_code == 200
     assert run("--final").returncode == 0
     by = json.load(open(data / "out/gold_by_dicom.json"))
     assert by and all(len(v) for v in by.values())

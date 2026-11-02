@@ -32,7 +32,8 @@ def copy_demo(dst: Path) -> Path:
 def server(data: Path, mode: str = "read", readers: str = "r1,r2"):
     port = free_port()
     p = subprocess.Popen([sys.executable, "-m", "goldkp.server", "--data", str(data), "--images", str(data / "images"),
-                          "--readers", readers, "--mode", mode, "--port", str(port)], cwd=ROOT,
+                          "--readers", readers, "--mode", mode, "--port", str(port),
+                          "--subset", "off", "--group-order", "off"], cwd=ROOT,
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     url = f"http://127.0.0.1:{port}"
     try:

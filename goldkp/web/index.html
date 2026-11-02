@@ -2,83 +2,117 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>Landmark reader</title>
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
+<!-- reader picker after the account chooser of Google and Apple: round avatars, nothing else -->
 <div id="pick" class="screen">
-  <h1>Landmark reader</h1>
-  <p id="pickHint">Choose your reader id. Your annotations are stored separately and never shown to the other reader.</p>
+  <h1>Who's reading?</h1>
+  <p id="pickHint">Your answers are kept separately and never shown to the other reader.</p>
   <div id="readerButtons"></div>
 </div>
 
 <div id="main" class="screen" hidden>
+  <!-- top bar after Google Docs: identity and position left, image tools centred, actions right;
+       hairline progress along its bottom edge as in Safari's address bar -->
   <header>
-    <span id="who"></span>
-    <span id="cardPos"></span>
-    <div id="progress"><div id="progressBar"></div></div>
-    <span id="groupProgress"></span>
-    <span id="jumpBox">
-      <input id="jump" type="number" min="1" placeholder="card #" title="Go to card number (Enter)">
-      <select id="jumpGroup" title="Go to the first card of a group"><option value="">go to…</option></select>
+    <button id="who" class="chip" title="Switch reader"></button>
+    <span id="jumpBox" title="Go to card number (g, then Enter)">
+      <input id="jump" type="number" min="1" aria-label="card number"><span id="cardPos"></span>
     </span>
-    <button id="btnExport" title="Save a snapshot of your annotations so far on the server">Export</button>
-    <span id="timer">0:00</span>
-    <button id="helpBtn" title="Keyboard shortcuts (?)">?</button>
+    <select id="jumpGroup" title="Go to the first card of a group"><option value="">Go to group</option></select>
+    <span class="grow"></span>
+    <!-- unified toolbar after macOS Preview and Photos: the image tools sit in the title bar,
+         centred, icons only, the active tool tinted, names and shortcuts in the tooltips -->
+    <div id="toolbar">
+      <button id="btnUndo" class="icon" title="Undo (Ctrl+Z)" aria-label="Undo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12.5 8c-2.65 0-5.05 1-6.9 2.6L2 7v9h9l-3.62-3.62C8.77 11.22 10.54 10.5 12.5 10.5c3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"/></svg></button>
+      <button id="btnRedo" class="icon" title="Redo (Ctrl+Shift+Z / Ctrl+Y)" aria-label="Redo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M18.4 10.6C16.55 9 14.15 8 11.5 8c-4.65 0-8.58 3.03-9.96 7.22L3.9 16c1.05-3.19 4.05-5.5 7.6-5.5 1.95 0 3.73.72 5.12 1.88L13 16h9V7l-3.6 3.6z"/></svg></button>
+      <span class="sep"></span>
+      <button id="btnCrop" class="icon" title="Whole image (c)" aria-label="Whole image" aria-pressed="false"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3 3.5-4.5 4.5 6H5l3.5-4.5z"/></svg></button>
+      <button id="btnMasks" class="icon" title="Structure outlines (m): solid = own structure, dashed = structure the rule reads" aria-label="Outlines" aria-pressed="false"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M11.99 18.54l-7.37-5.73L3 14.07l9 7 9-7-1.63-1.27-7.38 5.74zM12 16l7.36-5.73L21 9l-9-7-9 7 1.63 1.27L12 16z"/></svg></button>
+      <button id="btnHide" class="icon" title="Hold to hide the points (h)" aria-label="Hide points"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46A11.8 11.8 0 0 0 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78 3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/></svg></button>
+      <button id="btnRuler" class="icon" title="Ruler (l): drag on the image to measure. Approximate only" aria-label="Ruler" aria-pressed="false"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M2.1 16.6 16.6 2.1l5.3 5.3L7.4 21.9zm2.8 0 2.5 2.5L19.1 7.4l-2.5-2.5-1.4 1.4 1.4 1.4-1 1-1.4-1.4-1.4 1.4 2.1 2.1-1 1-2.1-2.1-1.4 1.4 1.4 1.4-1 1-1.4-1.4-1.4 1.4 2.1 2.1-1 1-2.1-2.1z"/></svg></button>
+      <span class="sep"></span>
+      <label class="slider" title="Brightness ([ / ])"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM2 13h2a1 1 0 0 0 0-2H2a1 1 0 0 0 0 2zm18 0h2a1 1 0 0 0 0-2h-2a1 1 0 0 0 0 2zM11 2v2a1 1 0 0 0 2 0V2a1 1 0 0 0-2 0zm0 18v2a1 1 0 0 0 2 0v-2a1 1 0 0 0-2 0zM5.99 4.58a1 1 0 0 0-1.41 1.41l1.06 1.06a1 1 0 0 0 1.41-1.41L5.99 4.58zm12.37 12.37a1 1 0 0 0-1.41 1.41l1.06 1.06a1 1 0 0 0 1.41-1.41l-1.06-1.06zm1.06-10.96a1 1 0 0 0-1.41-1.41l-1.06 1.06a1 1 0 0 0 1.41 1.41l1.06-1.06zM7.05 18.36a1 1 0 0 0-1.41-1.41l-1.06 1.06a1 1 0 0 0 1.41 1.41l1.06-1.06z"/></svg><input id="bright" type="range" min="50" max="200" value="100" aria-label="Brightness"></label>
+      <label class="slider" title="Contrast ({ / })"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 22c5.52 0 10-4.48 10-10S17.52 2 12 2 2 6.48 2 12s4.48 10 10 10zm1-17.93c3.94.49 7 3.85 7 7.93s-3.05 7.44-7 7.93V4.07z"/></svg><input id="contrast" type="range" min="50" max="250" value="100" aria-label="Contrast"></label>
+      <button id="btnResetView" class="icon" title="Reset brightness and contrast (0)" aria-label="Reset brightness and contrast"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
+    </div>
+    <span class="grow"></span>
+    <span id="totalProgress" class="muted"></span>
+    <span id="timer" class="muted" title="Active reading time on this card">0:00</span>
+    <button id="btnExport" class="ghost" title="Save a snapshot of your answers on the server (Ctrl+S)"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M16 5l-1.42 1.42-1.59-1.59V16h-1.98V4.83L9.42 6.42 8 5l4-4 4 4zm4 5v11c0 1.1-.9 2-2 2H6a2 2 0 0 1-2-2V10c0-1.11.89-2 2-2h3v2H6v11h12V10h-3V8h3a2 2 0 0 1 2 2z"/></svg><span>Export</span></button>
+    <button id="helpBtn" class="icon round" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+    <div id="progress"><div id="progressBar"></div></div>
   </header>
   <div id="work">
     <section id="left">
-      <div id="banner"></div>
-      <canvas id="view" width="720" height="720"></canvas>
-      <div id="toolbar">
-        <button id="btnCrop" title="Switch between the zoomed crop and the whole image (c)">View: zoomed (c)</button>
-        <button id="btnMasks" title="Structure outlines (m): solid = own structure, dashed = structure the rule reads">Outlines: off</button>
-        <button id="btnHide" title="Hold h to hide the points">Hide points</button>
-        <label>Brightness <input id="bright" type="range" min="50" max="200" value="100"></label>
-        <label>Contrast <input id="contrast" type="range" min="50" max="250" value="100"></label>
-        <button id="btnResetView">Reset view</button>
+      <div id="stage">
+        <div id="canvasWrap">
+          <canvas id="view" width="720" height="720"></canvas>
+          <div id="banner"></div>
+          <div id="rulerWarn" hidden role="note"></div>
+          <!-- zoom control after Google Maps: bottom right, stacked -->
+          <div id="zoomCtl">
+            <button id="zoomIn" class="icon" title="Zoom in (+, mouse wheel)" aria-label="Zoom in"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg></button>
+            <button id="zoomOut" class="icon" title="Zoom out (-)" aria-label="Zoom out"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M19 13H5v-2h14v2z"/></svg></button>
+            <button id="zoomFit" class="icon" title="Back to the card's view (z)" aria-label="Fit"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M3 3h6v2H5v4H3zm12 0h6v6h-2V5h-4zM3 15h2v4h4v2H3zm16 0h2v6h-6v-2h4z"/></svg></button>
+          </div>
+          <div id="maskLegend" hidden></div>
+        </div>
       </div>
-      <div id="maskLegend" hidden></div>
     </section>
+    <!-- inspector after the macOS sidebar inspector: title, list, details; actions pinned at the bottom -->
     <section id="right">
-      <div id="groupInfo">
-        <div id="groupTitle"></div>
-        <div id="groupRegion"></div>
-        <div id="groupDesc"></div>
-      </div>
-      <ol id="points"></ol>
-      <div id="defBox">
-        <div id="defLabel"></div>
-        <div id="defMethod"></div>
-        <div id="defRule"></div>
-        <div id="defNote"></div>
-      </div>
-      <div id="adjLegend" hidden>
-        <span class="mk a"></span> reader A <span class="mk b"></span> reader B <span class="mk m"></span> mean
-      </div>
-      <label id="flagRow"><input type="checkbox" id="flag"> structure not assessable on this image <span class="muted">(f)</span></label>
-      <textarea id="comment" rows="2" placeholder="comment (optional)"></textarea>
-      <div id="nav">
-        <button id="btnPrev" title="Previous card (Backspace)">◀ Back</button>
-        <button id="btnUndo" title="Undo the last change on this card (Ctrl+Z)">↶ Undo</button>
-        <button id="btnRedo" title="Redo (Ctrl+Shift+Z / Ctrl+Y)">↷ Redo</button>
-        <button id="btnSubmit" class="primary" title="Submit and next (Enter)">Submit ▶</button>
-      </div>
-      <div id="msg"></div>
-      <div id="refRow">
+      <div id="scroll">
+        <div id="groupInfo">
+          <canvas id="thumb" width="96" height="96" title="Whole image; the box is the current view"></canvas>
+          <div id="groupText">
+            <div id="groupTitle"></div>
+            <div id="groupRegion"></div>
+            <div id="groupProgress"></div>
+          </div>
+          <div id="groupDesc"></div>
+        </div>
+        <ol id="points"></ol>
+        <div id="defBox">
+          <div id="defLabel"></div>
+          <div id="defMethod"></div>
+          <div id="defRule"></div>
+          <div id="defNote"></div>
+        </div>
+        <div id="adjLegend" hidden>
+          <span class="mk a"></span> reader A <span class="mk b"></span> reader B <span class="mk m"></span> mean
+        </div>
         <div id="refBox">
           <div id="refTabs">
-            <button id="refMain" class="on">Reference</button>
-            <button id="refSeries" hidden>All levels</button>
-            <span class="muted">ground truth example</span>
+            <span class="k">Reference</span>
+            <!-- segmented control after iOS -->
+            <span id="refChips" class="segmented">
+              <button id="refMain" class="on" title="Ground-truth example (1)">Example</button>
+              <button id="refSeries" hidden title="Ground-truth example, all levels (2)">All levels</button>
+            </span>
           </div>
-          <img id="ref" alt="ground-truth reference for this group">
+          <img id="ref" alt="Ground-truth reference for this group">
         </div>
-        <canvas id="thumb" width="130" height="130" title="whole image; box = current view"></canvas>
+      </div>
+      <div id="actions">
+        <!-- switch after iOS Settings -->
+        <label id="flagRow" title="Structure not assessable on this image (f)"><span>Not assessable</span><input type="checkbox" id="flag" class="switch"></label>
+        <textarea id="comment" rows="2" placeholder="Comment"></textarea>
+        <div id="nav">
+          <button id="btnPrev" class="ghost" title="Previous card (Backspace)"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg><span>Back</span></button>
+          <button id="btnSubmit" class="primary" title="Submit and next (Enter)">Submit</button>
+        </div>
       </div>
     </section>
   </div>
 </div>
+
+<!-- snackbar after Google: short messages bottom centre, they never move the layout -->
+<div id="msg" role="status"></div>
 
 <div id="help" hidden>
   <div class="panel">
@@ -98,15 +132,24 @@
       <tr><td>Enter</td><td>submit and next card</td></tr>
       <tr><td>Backspace</td><td>previous card</td></tr>
       <tr><td>f</td><td>structure not assessable on this image</td></tr>
+      <tr><td>g</td><td>go to card number</td></tr>
+      <tr><td>Ctrl+S</td><td>export a snapshot</td></tr>
       <tr><th colspan="2">View</th></tr>
       <tr><td>m</td><td>structure outlines (solid: own structure, dashed: structure the rule reads)</td></tr>
       <tr><td>c</td><td>switch zoomed crop / whole image (cards with a zoomed view)</td></tr>
       <tr><td>h (hold)</td><td>hide the points</td></tr>
+      <tr><td>wheel / pinch, + / -</td><td>zoom in / out at the cursor</td></tr>
+      <tr><td>drag empty image, Alt + ← → ↑ ↓</td><td>pan the zoomed image</td></tr>
+      <tr><td>z</td><td>back to the card's view</td></tr>
+      <tr><td>l</td><td>ruler on / off: drag to measure (approximate, not for decisions)</td></tr>
+      <tr><td>[ / ]</td><td>brightness down / up</td></tr>
+      <tr><td>{ / }</td><td>contrast down / up</td></tr>
+      <tr><td>0</td><td>reset brightness and contrast</td></tr>
       <tr><td>1 / 2</td><td>reference: example / all levels</td></tr>
       <tr><td>?</td><td>this help</td></tr>
-      <tr><td>Esc</td><td>cancel a drag / close this help</td></tr>
+      <tr><td>Esc</td><td>cancel a drag / clear the ruler / close this help</td></tr>
     </table>
-    <button id="helpClose">Close</button>
+    <button id="helpClose" class="primary">Done</button>
   </div>
 </div>
 <script src="/static/app.js"></script>

@@ -19,13 +19,14 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+from .store import load_state
+
 VISIBLE = {"ok", "moved", "added"}
 
 
 def export_reader(data: Path, rid: str, out_root: Path | None = None) -> dict:
     cj = json.load(open(data / "cards.json"))
-    state_path = data / "readers" / rid / "state.json"
-    latest = json.load(open(state_path))["latest"] if state_path.exists() else {}
+    latest = load_state(data / "readers" / rid)["latest"]
     stamp = time.strftime("%Y%m%d-%H%M%S")
     out = (out_root or data / "exports") / rid / stamp
     out.mkdir(parents=True, exist_ok=True)

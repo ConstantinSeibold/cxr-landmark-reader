@@ -114,11 +114,26 @@ Use a separate reader id (e.g. `--readers pilot`) for a pilot so it never mixes 
   "Place: …" banner walks through the landmarks, each click places the next one.
 - **Not assessable** (`f`): marks the whole structure as not visible on this image; add a comment
   if useful.
-- **Order:** group by group (clinical groups first, then vertebrae and ribs, then zones, vessel
-  and abdominal points), frontal before lateral, images shuffled per reader. Every submit is saved
-  immediately; the session resumes at the first unfinished card.
-- **Navigation:** `card #` box (Enter) and the `go to…` menu (first card of every group with
-  progress, first scratch card) in the header; Back / Submit at the bottom.
+- **Order:** by default every group is first read on the same 30 frontal and 20 lateral images
+  for every reader (own order per reader), then on the rest, with the groups in the study order
+  (`DEFAULT_GROUP_ORDER` in `goldkp/cards.py`: G13, G12, G15, G14, G04, ...), frontal before lateral.
+  `--subset 10,5` and `--group-order G13,G12,...` change this, `--subset off` and
+  `--group-order off` turn it off (then: clinical groups first, then vertebrae and ribs, zones,
+  vessel and abdominal points). With `--image-blocks 10,5` the server instead finishes the first
+  10 images in full, then blocks of 5 (same images for every reader, own order per reader inside a
+  block). Every submit is saved immediately; the session resumes at the first unfinished card.
+- **Navigation:** card number box (type a number, Enter) and the `go to…` menu (first card of every
+  group with progress, first scratch card) in the header; Back / Submit pinned at the bottom of
+  the side panel. Undo / redo sit at the start of the toolbar above the image.
+- **Continue after a reload:** the browser keeps the last reader and card, brightness, contrast and
+  outlines, and per card the changes not yet submitted (points, flag, comment, time, zoom). A reload
+  or a server restart opens that card again with them; Ctrl+Z goes back to the submitted version.
+  Click the reader name top left to switch reader. Only submitted cards are saved on the server.
+- **Zoom:** mouse wheel or trackpad pinch zooms at the cursor, `+` / `-` and the buttons bottom right
+  on the image too; drag empty image or Alt + arrow keys to pan; `z` goes back to the card's view.
+- **Ruler** (`l`): drag on the image for a length in cm. Screen only, never saved. **Approximate:**
+  the study JPGs carry no pixel spacing, so 0.139 mm per pixel is assumed (`--pixel-spacing`, or a
+  `pixel_spacing` per image in `cards.json`), and chest films magnify (AP more than PA).
 - **Blinding:** readers only ever see their own answers.
 
 **Keyboard** (`?` shows this in the app)
@@ -128,15 +143,16 @@ Use a separate reader id (e.g. `--readers pilot`) for a pilot so it never mixes 
 | drag | move a point | Enter | submit, next card | `m` | structure outlines |
 | click | place the selected missing point | Backspace | previous card | `c` | zoomed / whole image |
 | ← → ↑ ↓ | nudge 1 screen px (Shift: 5) | `f` | not assessable | hold `h` | hide the points |
-| Tab / Shift+Tab | next / previous point | | | `1` / `2` | reference: example / all levels |
-| Space | next unresolved point | | | `?` | help |
-| `n` / `u` / `r` | not visible / unsure / reset to pre-fill | | | Esc | cancel a drag, close help |
-| Ctrl+Z | undo (this card) | | | | |
-| Ctrl+Shift+Z, Ctrl+Y | redo | | | | |
+| Tab / Shift+Tab | next / previous point | `g` | go to card number | `[` / `]` | brightness down / up |
+| Space | next unresolved point | Ctrl+S | export a snapshot | `{` / `}` | contrast down / up |
+| `n` / `u` / `r` | not visible / unsure / reset to pre-fill | | | `0` | reset brightness, contrast |
+| Ctrl+Z | undo (this card) | | | `1` / `2` | reference: example / all levels |
+| Ctrl+Shift+Z, Ctrl+Y | redo | | | `?` | help |
+| | | | | Esc | cancel a drag, close help |
 
 ## 3 Export (at any time)
 Finished or not:
-- **In the app:** *Export* in the header saves the current reader's annotations on the server and
+- **In the app:** *Export* in the header (Ctrl+S) saves the current reader's annotations on the server and
   shows the folder.
 - **Command line:** `python -m goldkp.export --data $DATA --readers r1,r2`
 
@@ -207,6 +223,8 @@ You receive one data zip from the study coordinator; everything else is in this 
    ```
    Keep the terminal open while reading. Every submitted card is saved at once; stop at any time and
    start again with the same command to continue where you left off.
+   On macOS and Linux `make start READERS=r1` runs it in the background instead (the terminal may
+   be closed); `make restart`, `make stop` and `make status` manage it.
 4. **Read** (section [2](#2-read)): correct the points, Enter for the next card; `n` not visible,
    `u` unsure, `f` not assessable, Ctrl+Z undo, `?` for all keys. Prefer *unsure* to guessing.
 5. **Send your results**: click *Export* and send the folder it names (`study/exports/r1/<time>/`)

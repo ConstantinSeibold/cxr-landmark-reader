@@ -13,6 +13,8 @@ import argparse
 import functools
 import io
 import json
+import math
+import threading
 import time
 from pathlib import Path
 
@@ -21,18 +23,37 @@ from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from PIL import Image
 
-from .cards import reader_order, rule_partners
+from .cards import DEFAULT_GOAL_GROUPS, DEFAULT_GROUP_ORDER, DEFAULT_SUBSET, image_blocks, reader_order, rule_partners, shared_subset
 from .export import export_reader
-from .store import ReaderStore, write_json_atomic
+from .store import ReaderStore, VersionMismatch, write_json_atomic
 
 WEB = Path(__file__).resolve().parent / "web"
 APP_VERSION = "0.1"
 STATUSES = {"ok", "moved", "added", "not_visible"}
+FLAGS = {None, "not_assessable"}
+
+
+def _xy(v) -> bool:
+    """A point in the 512 frame: two finite numbers (not booleans) inside the image."""
+    return (isinstance(v, list) and len(v) == 2
+            and all(isinstance(t, (int, float)) and not isinstance(t, bool) and math.isfinite(t) for t in v)
+            and 0 <= v[0] < 512 and 0 <= v[1] < 512)
+
+
+def _count(v, what: str) -> int:
+    """A non-negative whole count from the client (time in ms, number of edits)."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0:
+        raise HTTPException(422, f"{what} must be a non-negative number")
+    return int(min(v, 10**12))
 MASK_COLOURS = ["#00e5ff", "#7CFC00", "#ff6ec7", "#ffffff", "#c0a0ff", "#40ffa0"]   # own structures
 PARTNER_COLOURS = ["#ffb000", "#ff7a00", "#ffd84d", "#ff9e7a", "#e0c060", "#ffaa55"]  # structures the rules read
 CSP = ("default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
        "script-src 'self'; connect-src 'self'")
 
+
+
+# assumed detector pixel size (mm) for the ruler; common for MIMIC-CXR, not checked per image
+DEFAULT_PIXEL_SPACING = 0.139
 
 def _decode_rle(rle: dict) -> np.ndarray:
     from pycocotools import mask as M
@@ -43,9 +64,15 @@ def _decode_rle(rle: dict) -> np.ndarray:
 
 
 def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "read",
-               allow_version_change: bool = False) -> FastAPI:
+               allow_version_change: bool = False, blocks: list[int] | None = None,
+               subset: dict[str, int] | None = None, groups: list[str] | None = None,
+               skip_unknown_groups: bool = False, pixel_spacing: float = DEFAULT_PIXEL_SPACING) -> FastAPI:
     cards_json = json.load(open(data / "cards.json"))
     cards, sha = cards_json["cards"], cards_json["sha"]
+    if groups and skip_unknown_groups:
+        # the default group order may name groups a study does not have
+        present = {c["gid"] for c in cards}
+        groups = [g for g in groups if g in present]
     images = cards_json["images"]
     prefill_version = cards_json["prefill_version"]
     vocab = json.load(open(data / "static/vocab.json"))
@@ -53,7 +80,20 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
     refs = json.load(open(data / "refs/refs_manifest.json"))
     prefill_dir = data / "prefill" / prefill_version
     stores = {r: ReaderStore(data / "readers", r, sha, prefill_version, allow_version_change) for r in readers}
-    orders = {r: reader_order(cards, r) for r in readers}
+    shared = shared_subset(cards, subset) if subset else None
+    orders = {r: reader_order(cards, r, blocks, shared, groups) for r in readers}
+    block_of = {im: n for n, b in enumerate(image_blocks(cards, blocks), 1) for im in b} if blocks else {}
+    if shared and not blocks:
+        block_of = {c["img"]: 1 if c["img"] in shared else 2 for c in cards}
+    # the progress goal: shared images of the goal groups (only with a shared subset)
+    goal_groups = set(DEFAULT_GOAL_GROUPS)
+    goal_cards = [c["id"] for c in cards if shared and c["img"] in shared and c["gid"] in goal_groups]
+    def scale(img_idx: int) -> dict:
+        """mm per original pixel for the ruler: the image's own value when cards.json has one,
+        else the assumed default (the study JPGs carry no pixel spacing)."""
+        own = images[img_idx].get("pixel_spacing")
+        return {"mm_per_px": own or pixel_spacing, "spacing_assumed": not own}
+
     ref_files = {f for g in refs["files"].values() for v in g.values() for f in v.values()}
 
     @functools.lru_cache(maxsize=16)
@@ -104,6 +144,7 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
     def store_of(rid: str) -> ReaderStore:
         if rid not in stores:
             raise HTTPException(404, "unknown reader")
+        stores[rid].sync()
         return stores[rid]
 
     def card_at(rid: str, pos: int) -> dict:
@@ -112,15 +153,29 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
             raise HTTPException(404, "no such card")
         return cards[order[pos]]
 
+    # no-cache: the browser revalidates the page and its scripts, so an update is picked up on reload
+    NO_CACHE = {"Cache-Control": "no-cache"}
+
     @app.get("/", response_class=HTMLResponse)
     def index():
-        return (WEB / "index.html").read_text()
+        return HTMLResponse((WEB / "index.html").read_text(), headers=NO_CACHE)
 
     @app.get("/static/{name}")
     def static(name: str):
         if name not in {"app.js", "app.css"}:
             raise HTTPException(404)
-        return FileResponse(WEB / name, media_type="text/javascript" if name.endswith(".js") else "text/css")
+        return FileResponse(WEB / name, media_type="text/javascript" if name.endswith(".js") else "text/css",
+                            headers=NO_CACHE)
+
+    pos_of = {r: {cards[i]["id"]: p for p, i in enumerate(o)} for r, o in orders.items()}
+
+    @app.get("/api/r/{rid}/find")
+    def find(rid: str, card_id: str):
+        """Position of a card in this reader's order (resume on the same card after an order change)."""
+        store_of(rid)
+        if card_id not in pos_of[rid]:
+            raise HTTPException(404, "no such card")
+        return {"pos": pos_of[rid][card_id]}
 
     @app.get("/api/config")
     def config():
@@ -135,9 +190,21 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
             g = per_group.setdefault(c["gid"], {"total": 0, "done": 0})
             g["total"] += 1
             g["done"] += st.latest(c["id"]) is not None
+        # progress inside the card's image block (shared subset or image block), when there are blocks
+        per_block_group: dict = {}
+        for i in orders[rid]:
+            c = cards[i]
+            if block_of:
+                g = per_block_group.setdefault(f"{block_of[c['img']]}|{c['gid']}", {"total": 0, "done": 0})
+                g["total"] += 1
+                g["done"] += st.latest(c["id"]) is not None
         first_open = next((p for p, i in enumerate(orders[rid]) if st.latest(cards[i]["id"]) is None),
                           len(cards))
-        return {"total": len(cards), "done": st.done, "cursor": first_open, "per_group": per_group,
+        done = sum(1 for i in orders[rid] if st.latest(cards[i]["id"]) is not None)
+        goal = ({"total": len(goal_cards), "done": sum(1 for cid in goal_cards if st.latest(cid) is not None)}
+                if goal_cards else None)
+        return {"total": len(cards), "done": done, "cursor": first_open, "per_group": per_group,
+                "per_block_group": per_block_group, "goal": goal,
                 "cards_sha": sha, "prefill_version": prefill_version}
 
     @app.get("/api/r/{rid}/cards")
@@ -148,7 +215,7 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
         for pos, i in enumerate(orders[rid]):
             c = cards[i]
             out.append({"pos": pos, "gid": c["gid"], "view": c["view"], "batch": c["batch"], "mode": c["mode"],
-                        "done": st.latest(c["id"]) is not None})
+                        "block": block_of.get(c["img"]), "done": st.latest(c["id"]) is not None})
         names = {v: {g: meta["name"] for g, meta in vocab["groups"][v].items()} for v in vocab["groups"]}
         return {"cards": out, "group_names": names}
 
@@ -180,9 +247,10 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
         ref = refs["files"].get(c["gid"], {}).get(view, {})
         return {
             "pos": pos, "total": len(cards), "card_id": c["id"], "img": c["img"], "view": view,
+            "block": block_of.get(c["img"]),
             "gid": c["gid"], "group": {"name": g["name"], "region": g["region"], "description": g["description"]},
             "batch": c["batch"], "box": c["box"], "full": c["full"], "mode": c["mode"],
-            "orig_wh": pf.get("orig_wh"), "points": pts,
+            "orig_wh": pf.get("orig_wh"), **scale(c["img"]), "points": pts,
             "edges": [e for e in vocab["edges"][view] if e[0] in keyset and e[1] in keyset],
             "refs": {k: f"/api/ref/{v}" for k, v in ref.items()},
             "outlines": outline_classes(c),
@@ -194,9 +262,18 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
     def submit(rid: str, pos: int, body: dict = Body(...)):
         st = store_of(rid)
         c = card_at(rid, pos)
-        got = {p.get("key"): p for p in body.get("points", [])}
-        if set(got) != set(c["keys"]):
-            raise HTTPException(422, "points must cover exactly the card's landmarks")
+        # the position alone is not enough: the reading order can change between loading and submitting
+        # (server restarted with other order flags), and the answer would land on another image
+        if body.get("card_id") != c["id"]:
+            raise HTTPException(409, "this card changed on the server; reload the page")
+        pts_in = body.get("points")
+        if not isinstance(pts_in, list) or not all(isinstance(p, dict) for p in pts_in):
+            raise HTTPException(422, "points must be a list of objects")
+        got = {p.get("key"): p for p in pts_in}
+        if len(got) != len(pts_in) or set(got) != set(c["keys"]):
+            raise HTTPException(422, "points must cover exactly the card's landmarks, once each")
+        if body.get("flag") not in FLAGS:
+            raise HTTPException(422, "invalid flag")
         pf = prefill(c["img"])
         out = []
         for key in c["keys"]:
@@ -207,19 +284,19 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
             xy = p.get("xy")
             if status == "not_visible":
                 xy = None
-            elif not (isinstance(xy, list) and len(xy) == 2 and all(isinstance(v, (int, float)) for v in xy)
-                      and 0 <= xy[0] < 512 and 0 <= xy[1] < 512):
+            elif not _xy(xy):
                 raise HTTPException(422, f"coordinates of {key} outside the image")
             cls, kp = key.split("|", 1)
             pre = pf["points"].get(cls, {}).get(kp)
             out.append({"key": key, "status": status, "unsure": bool(p.get("unsure")), "xy": xy,
                         "prefill": pre if c["mode"] == "prefill" else None,
-                        "n_edits": int(p.get("n_edits", 0))})
+                        "n_edits": _count(p.get("n_edits", 0), "n_edits")})
         rec = {"ts": time.time(), "rid": rid, "pos": pos, "card_id": c["id"], "dicom_id": c["dicom_id"],
                "view": c["view"], "gid": c["gid"], "batch": c["batch"], "mode": c["mode"],
                "prefill_version": prefill_version, "cards_sha": sha, "app_version": APP_VERSION,
                "points": out, "card_flag": body.get("flag"), "comment": str(body.get("comment", ""))[:2000],
-               "active_ms": int(body.get("active_ms", 0)), "n_events": int(body.get("n_events", 0))}
+               "active_ms": _count(body.get("active_ms", 0), "active_ms"),
+               "n_events": _count(body.get("n_events", 0), "n_events")}
         st.append(rec)
         return {"ok": True, "next": min(pos + 1, len(cards) - 1), "done": st.done}
 
@@ -258,6 +335,21 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
             raise HTTPException(404)
         return json.load(open(queue_path)) if queue_path.exists() else []
 
+    adj_lock = threading.Lock()
+
+    def resolved_rec(st: dict, it: dict) -> dict | None:
+        """The decision for this queue item, only when it was made on the same card (a re-run of
+        aggregate.py can rebuild the queue)."""
+        rec = st.get(it["item_id"])
+        if not rec or rec.get("card_id") != it["card_id"]:
+            return None
+        if "basis" not in rec:                      # saved before the basis was recorded
+            return rec
+        # per landmark, on positions only: the reasons and the flagged set move with the sigma table
+        basis = {b.get("key"): (b.get("a"), b.get("b")) for b in rec["basis"]}
+        ok = all(k["key"] in rec.get("keys", {}) and basis.get(k["key"]) == (k["a"], k["b"]) for k in it["keys"])
+        return rec if ok else None
+
     def adj_state() -> dict:
         p = adj_dir / "state.json"
         return json.load(open(p)) if p.exists() else {}
@@ -266,8 +358,8 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
     def adj_session():
         q = adj_queue()
         st = adj_state()
-        return {"total": len(q), "done": sum(1 for it in q if it["item_id"] in st),
-                "cursor": next((i for i, it in enumerate(q) if it["item_id"] not in st), len(q))}
+        return {"total": len(q), "done": sum(1 for it in q if resolved_rec(st, it)),
+                "cursor": next((i for i, it in enumerate(q) if not resolved_rec(st, it)), len(q))}
 
     @app.get("/api/adj/item/{i}")
     def adj_item(i: int):
@@ -288,8 +380,8 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
         return {"pos": i, "total": len(q), "item_id": it["item_id"], "img": c["img"], "view": view,
                 "gid": c["gid"], "group": {"name": g["name"], "region": g["region"], "description": g["description"]},
                 "batch": c["batch"], "box": c["box"], "full": c["full"], "orig_wh": prefill(c["img"]).get("orig_wh"),
-                "keys": keys, "refs": {k: f"/api/ref/{v}" for k, v in ref.items()},
-                "resolved": adj_state().get(it["item_id"])}
+                **scale(c["img"]), "keys": keys, "refs": {k: f"/api/ref/{v}" for k, v in ref.items()},
+                "resolved": resolved_rec(adj_state(), it)}
 
     @app.post("/api/adj/item/{i}/resolve")
     def adj_resolve(i: int, body: dict = Body(...)):
@@ -297,22 +389,33 @@ def create_app(data: Path, images_root: Path, readers: list[str], mode: str = "r
         if not 0 <= i < len(q):
             raise HTTPException(404)
         it = q[i]
-        allowed = {k["key"] for k in it["keys"]}
-        res = body.get("keys", {})
-        if set(res) != allowed:
+        if body.get("item_id") != it["item_id"]:
+            raise HTTPException(409, "the adjudication queue changed; reload the page")
+        sides = {k["key"]: k for k in it["keys"]}
+        res = body.get("keys")
+        if not isinstance(res, dict) or set(res) != set(sides):
             raise HTTPException(422, "resolve every flagged landmark")
         for k, v in res.items():
-            if v.get("choice") not in {"A", "B", "mean", "new", "not_visible"}:
+            ch = v.get("choice") if isinstance(v, dict) else None
+            if ch not in {"A", "B", "mean", "new", "not_visible"}:
                 raise HTTPException(422, f"invalid choice for {k}")
-            if v["choice"] == "new" and not (isinstance(v.get("xy"), list) and len(v["xy"]) == 2):
-                raise HTTPException(422, f"new position missing for {k}")
-        rec = {"ts": time.time(), "item_id": it["item_id"], "card_id": it["card_id"], "keys": res}
-        adj_dir.mkdir(parents=True, exist_ok=True)
-        with open(adj_dir / "decisions.jsonl", "a") as f:
-            f.write(json.dumps(rec) + "\n")
-        st = adj_state()
-        st[it["item_id"]] = rec
-        write_json_atomic(adj_dir / "state.json", st)
+            need = {"A": ["a"], "B": ["b"], "mean": ["a", "b"]}.get(ch, [])
+            if any(sides[k].get(s) is None for s in need):
+                raise HTTPException(422, f"{ch} is not available for {k} (that reader marked it not visible)")
+            if ch == "new" and not _xy(v.get("xy")):
+                raise HTTPException(422, f"new position missing or outside the image for {k}")
+            res[k] = {"choice": ch, "xy": v.get("xy") if ch == "new" else None}
+        # basis: the positions the decision was made on; a re-run of aggregate.py that changes them
+        # (a reader revised the card) reopens the item
+        rec = {"ts": time.time(), "item_id": it["item_id"], "card_id": it["card_id"], "keys": res,
+               "basis": it["keys"]}
+        with adj_lock:
+            adj_dir.mkdir(parents=True, exist_ok=True)
+            with open(adj_dir / "decisions.jsonl", "a") as f:
+                f.write(json.dumps(rec) + "\n")
+            st = adj_state()
+            st[it["item_id"]] = rec
+            write_json_atomic(adj_dir / "state.json", st)
         return {"ok": True, "next": min(i + 1, len(q) - 1)}
 
     return app
@@ -327,12 +430,48 @@ def main() -> None:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--allow-version-change", action="store_true")
+    ap.add_argument("--image-blocks", default="", help="read in image blocks, e.g. 10,5: the first 10 images "
+                    "in full, then blocks of 5 (same images for every reader)")
+    ap.add_argument("--subset", default=None, help="frontal,lateral image counts read first in every group "
+                    "(same images for every reader, own order per reader); default 30,20 unless --image-blocks "
+                    "is given, off to turn it off")
+    ap.add_argument("--pixel-spacing", type=float, default=DEFAULT_PIXEL_SPACING,
+                    help="assumed mm per pixel for the ruler when an image has no pixel_spacing in cards.json")
+    ap.add_argument("--group-order", default=None, help="groups to read first, in this order, e.g. G13,G12,G15; "
+                    "default the study order (DEFAULT_GROUP_ORDER in goldkp/cards.py), off to turn it off")
     args = ap.parse_args()
+    if args.subset is not None and args.subset.strip().lower() == "off":
+        args.subset = ""
+    if args.image_blocks and args.subset:
+        raise SystemExit("--image-blocks and --subset exclude each other")
+    default_groups = args.group_order is None
+    if args.subset is None:
+        args.subset = "" if args.image_blocks else ",".join(str(DEFAULT_SUBSET[v]) for v in ("frontal", "lateral"))
+    if default_groups:
+        args.group_order = ",".join(DEFAULT_GROUP_ORDER)
+    args.subset = "" if args.subset.strip().lower() == "off" else args.subset
+    args.group_order = "" if args.group_order.strip().lower() == "off" else args.group_order
+    try:
+        blocks = [int(n) for n in args.image_blocks.split(",") if n.strip()]
+        sizes = [int(n) for n in args.subset.split(",") if n.strip()]
+    except ValueError:
+        raise SystemExit("--image-blocks and --subset take comma-separated whole numbers")
+    if any(n < 1 for n in blocks) or any(n < 0 for n in sizes) or len(sizes) > 2:
+        raise SystemExit("--image-blocks sizes must be positive; --subset is frontal[,lateral], not negative")
+    if not 0 < args.pixel_spacing < 5:
+        raise SystemExit("--pixel-spacing is mm per pixel, e.g. 0.139")
     if args.host not in {"127.0.0.1", "localhost", "::1"}:
         raise SystemExit("the reader app only binds to loopback; use an SSH tunnel for remote readers")
     import uvicorn
-    app = create_app(args.data, args.images, [r.strip() for r in args.readers.split(",") if r.strip()],
-                     args.mode, args.allow_version_change)
+    try:
+        app = create_app(args.data, args.images, [r.strip() for r in args.readers.split(",") if r.strip()],
+                         args.mode, args.allow_version_change,
+                         blocks or None,
+                         dict(zip(("frontal", "lateral"), sizes)) or None,
+                         [g.strip() for g in args.group_order.split(",") if g.strip()] or None,
+                         skip_unknown_groups=default_groups, pixel_spacing=args.pixel_spacing)
+    except (ValueError, VersionMismatch) as e:
+        raise SystemExit(str(e))
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 

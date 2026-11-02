@@ -13,7 +13,7 @@ def answer(card, shift=(0.0, 0.0), status="ok"):
         xy = p["xy"] or [100.0, 100.0]
         pts.append({"key": p["key"], "status": status if p["xy"] else "added", "unsure": False,
                     "xy": [xy[0] + shift[0], xy[1] + shift[1]], "n_edits": 0})
-    return {"points": pts, "active_ms": 1000, "n_events": 1}
+    return {"card_id": card["card_id"], "points": pts, "active_ms": 1000, "n_events": 1}
 
 
 def test_card_payload_and_submit_roundtrip(study, client_factory):
@@ -101,10 +101,88 @@ def test_card_index_for_jumping(study, client_factory):
     c = client_factory(*study)
     d = c.get("/api/r/r1/cards").json()
     assert [x["pos"] for x in d["cards"]] == list(range(7))
-    assert set(d["cards"][0]) == {"pos", "gid", "view", "batch", "mode", "done"}     # no image identifiers
+    assert set(d["cards"][0]) == {"pos", "gid", "view", "batch", "mode", "block", "done"}     # no image identifiers
     assert d["group_names"]["frontal"]["G19"] == "Vertebrae"
     card = c.get("/api/r/r1/card/0").json()
     assert all("reader" in p and "rule" in p and "method" in p and "note" in p for p in card["points"])
+
+
+def test_shared_subset_order_and_progress(study):
+    from fastapi.testclient import TestClient
+
+    from goldkp.server import create_app
+    data, imgs = study
+    c = TestClient(create_app(data, imgs, ["r1", "r2"], "read", False, None, {"frontal": 1, "lateral": 1}, ["G19"]))
+    for rid in ("r1", "r2"):
+        d = c.get(f"/api/r/{rid}/cards").json()["cards"]
+        blocks = [x["block"] for x in d]
+        assert blocks == sorted(blocks) and set(blocks) == {1, 2}      # shared images first
+        assert d[0]["gid"] == "G19"
+        card = c.get(f"/api/r/{rid}/card/0").json()
+        assert card["block"] == 1
+        s = c.get(f"/api/r/{rid}/session").json()
+        assert s["per_block_group"][f"1|{card['gid']}"]["total"] < s["per_group"][card["gid"]]["total"]
+    with pytest.raises(ValueError):
+        create_app(data, imgs, ["r1"], "read", False, None, None, ["G99"])
+
+
+@pytest.mark.parametrize("flags", [["--image-blocks", "0"], ["--subset", "30,20,5"], ["--subset", "x"],
+                                   ["--image-blocks", "5", "--subset", "30"]])
+def test_order_flags_are_checked(monkeypatch, flags):
+    import sys
+
+    from goldkp import server
+    monkeypatch.setattr(sys, "argv", ["x", "--data", ".", "--images", ".", *flags])
+    with pytest.raises(SystemExit):
+        server.main()
+
+
+@pytest.mark.parametrize("flags, subset, groups", [
+    ([], {"frontal": 30, "lateral": 20}, "default"),
+    (["--image-blocks", "10,5"], None, "default"),
+    (["--subset", "off", "--group-order", "off"], None, None),
+    (["--subset", "5,2", "--group-order", "G19"], {"frontal": 5, "lateral": 2}, ["G19"]),
+])
+def test_default_reading_order(monkeypatch, flags, subset, groups):
+    import sys
+
+    from goldkp import server
+    from goldkp.cards import DEFAULT_GROUP_ORDER
+    seen = {}
+
+    def fake_app(data, images, readers, mode, allow, blocks, sub, grp, skip_unknown_groups=False, **kw):
+        seen.update(subset=sub, groups=grp, skip=skip_unknown_groups)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(server, "create_app", fake_app)
+    monkeypatch.setattr(sys, "argv", ["x", "--data", ".", "--images", ".", *flags])
+    with pytest.raises(SystemExit):
+        server.main()
+    assert seen["subset"] == subset
+    assert seen["groups"] == (DEFAULT_GROUP_ORDER if groups == "default" else groups)
+    assert seen["skip"] == (groups == "default")
+
+
+def test_default_group_order_skips_missing_groups(study):
+    from fastapi.testclient import TestClient
+
+    from goldkp.cards import DEFAULT_GROUP_ORDER
+    from goldkp.server import create_app
+    data, imgs = study
+    c = TestClient(create_app(data, imgs, ["r1"], groups=DEFAULT_GROUP_ORDER + ["G99"], skip_unknown_groups=True))
+    assert c.get("/api/r/r1/cards").status_code == 200
+
+
+def test_card_carries_ruler_scale(study):
+    from fastapi.testclient import TestClient
+
+    from goldkp.server import DEFAULT_PIXEL_SPACING, create_app
+    data, imgs = study
+    c = TestClient(create_app(data, imgs, ["r1"]))
+    card = c.get("/api/r/r1/card/0").json()
+    assert card["mm_per_px"] == DEFAULT_PIXEL_SPACING and card["spacing_assumed"] is True
+    card = TestClient(create_app(data, imgs, ["r1"], pixel_spacing=0.2)).get("/api/r/r1/card/0").json()
+    assert card["mm_per_px"] == 0.2
 
 
 def test_partial_export(study, client_factory):
